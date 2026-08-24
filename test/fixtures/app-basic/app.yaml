@@ -1,0 +1,11 @@
+pages:
+  "/":
+    title: Trips
+    filters:
+      month: { type: month, default: current }
+    sections:
+      - StatCard: { label: This month, value: data#monthlyTotal }
+      - Table:
+          rows: data#trips
+          columns: [date, km]
+          empty: No trips yet
