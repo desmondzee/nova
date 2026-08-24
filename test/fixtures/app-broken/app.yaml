@@ -1,0 +1,8 @@
+pages:
+  "/":
+    filters:
+      month: { type: month, default: current }
+    sections:
+      - Table:
+          rows: data#trips
+          columns: [date]

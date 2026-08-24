@@ -133,6 +133,33 @@ describe("resolveApp", () => {
     expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2009"]);
   });
 
+  it("leaves a bare catalog specifier unchanged, with no relative rewriting applied", () => {
+    // Every other fixture config uses a relative catalog path, so specifierFromOutDir's
+    // bare-specifier passthrough (`if (!specifier.startsWith(".")) return specifier;`)
+    // is otherwise never exercised — yet a real host's catalogs are published package
+    // names, so this is the branch it actually uses. "@fixture/ui" is a made-up path
+    // mapping in the fixture tsconfig (paths: { "@fixture/ui": ["./catalog/ui.tsx"] }),
+    // pointing at the same catalog file the relative-specifier tests use.
+    const bareConfig: NovaConfig = { ...config, components: ["@fixture/ui"] };
+    const { raw, positions } = loadSpecFile(SPEC_FILE, readFileSync(SPEC_FILE, "utf8"));
+    const { spec } = validate(raw, positions);
+    const { catalog, diagnostics: catalogDiags } = readCatalogs(bareConfig, SPEC_FILE);
+    expect(catalogDiags).toEqual([]);
+    const { resolved, diagnostics } = resolveApp(spec!, {
+      config: bareConfig,
+      appDir: APP_DIR,
+      specFile: SPEC_FILE,
+      catalog,
+      positions,
+    });
+    expect(diagnostics).toEqual([]);
+    expect(resolved!.components).toContainEqual({ name: "Table", module: "@fixture/ui" });
+    expect(resolved!.components).toContainEqual({ name: "StatCard", module: "@fixture/ui" });
+    for (const c of resolved!.components) {
+      expect(c.module).toBe("@fixture/ui");
+    }
+  });
+
   it("prefers .ts exports over .tsx exports for the same base name", () => {
     const specFile = here("./fixtures/app-tiebreak/app.yaml");
     const appDir = dirname(specFile);

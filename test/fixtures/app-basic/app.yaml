@@ -9,3 +9,7 @@ pages:
           rows: data#trips
           columns: [date, km]
           empty: No trips yet
+  "/trip/:id":
+    title: Trip
+    sections:
+      - StatCard: { label: Trip, value: params.id }
