@@ -95,12 +95,13 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.line(`import { ${names.join(", ")} } from "${module}";`);
   }
   if (app.computes.length > 0) e.line(`import * as compute from "${appRel(config, "compute")}";`);
-  const { useAction, useFilters, useForm, useLoader } = hooksUsed(app);
+  const { useAction, useFilters, useForm, useLoader, useSort } = hooksUsed(app);
   const hooks = [
     ...(useAction ? ["useAction"] : []),
     ...(useFilters ? ["useFilters"] : []),
     ...(useForm ? ["useForm"] : []),
     ...(useLoader ? ["useLoader"] : []),
+    ...(useSort ? ["useSort"] : []),
   ];
   if (hooks.length > 0) e.line(`import { ${hooks.join(", ")} } from "${rel(config, "./runtime")}";`);
   for (const name of app.loaders) {
@@ -176,6 +177,10 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
       const opts = confirm === undefined ? "" : `, { confirm: ${JSON.stringify(confirm)} }`;
       e.line(`const ${name}Action = useAction("/_actions/${name}"${opts});`);
     }
+    // One sort state per page (NOVA1011 rejects a second sortable section), hoisted like
+    // every other hook. `sortState` rather than `sort` so it does not collide with a
+    // filter or component named `sort` reading naturally in the same file.
+    if (pageNeedsSort(page)) e.line("const sortState = useSort();");
     // One `useForm` per form, hoisted above the JSX like every other hook. The generic
     // is the action's own input type, which is what makes each field's `name` a checked
     // key of it — and makes the assembled initial-value object a completeness check on
@@ -267,6 +272,10 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
       entries.set("error", `${form}.error`);
       entries.set("onSubmit", `${form}.submit`);
     }
+    if (section.sortable !== undefined) {
+      entries.set("sort", "sortState.value");
+      entries.set("onSort", "sortState.set");
+    }
     const props = attrs(entries);
     const open = props === "" ? `<${name}` : `<${name} ${props}`;
     const fields = section.fields ?? [];
@@ -349,6 +358,7 @@ export function hooksUsed(app: ResolvedApp): {
   useFilters: boolean;
   useForm: boolean;
   useLoader: boolean;
+  useSort: boolean;
 } {
   return {
     // "the app has actions" is not the same question: a form's action is submitted
@@ -358,6 +368,7 @@ export function hooksUsed(app: ResolvedApp): {
     useFilters: app.spec.pages.some(pageNeedsFilters),
     useForm: app.formActions.length > 0,
     useLoader: app.loaders.length > 0,
+    useSort: app.spec.pages.some(pageNeedsSort),
   };
 }
 
@@ -370,6 +381,13 @@ export function hooksUsed(app: ResolvedApp): {
 // nothing reads (yet) must not declare the local.
 function pageNeedsFilters(page: PageSpec): boolean {
   return page.filters.length > 0 && (usedLoaders(page.sections).length > 0 || collect(page.sections, "filter").length > 0);
+}
+
+/** Whether any section on this page declares sortable columns. */
+function pageNeedsSort(page: PageSpec): boolean {
+  const walk = (list: SectionSpec[]): boolean =>
+    list.some((s) => s.sortable !== undefined || walk(s.children));
+  return walk(page.sections);
 }
 
 function usedLoaders(sections: SectionSpec[]): string[] {

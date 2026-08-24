@@ -1,0 +1,7 @@
+pages:
+  "/":
+    sections:
+      - SortableTable:
+          rows: data#trips
+          columns: [date, km]
+          sortable: [date, km]

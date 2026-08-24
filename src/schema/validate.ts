@@ -28,6 +28,7 @@ const FILTER_KEYS = ["default"];
  */
 const FORM_PROPS = ["busy", "error", "onSubmit"];
 const FIELD_PROPS = ["error", "onChange", "value"];
+const SORT_PROPS = ["onSort", "sort"];
 const ROUTE = /^\/$|^(?:\/(?:[A-Za-z0-9\-_]+|:[A-Za-z_$][A-Za-z0-9_$]*))+$/;
 
 // Iteration order below is intentionally inconsistent: loops that build the emitted AppSpec
@@ -149,7 +150,7 @@ export function validate(
       const s = validateSection(raw, [...path, "sections", i], report, placed);
       if (s) sections.push(s);
     });
-    checkPageActions(route, placed, report);
+    checkPageConsistency(route, placed, report);
 
     const page: PageSpec = { route, filters, sections };
     if (title !== undefined) page.title = title;
@@ -193,13 +194,17 @@ export function validate(
   }
 
   /**
+   * Whole-page checks: things that are only wrong in combination, and which a
+   * section-by-section pass therefore cannot see.
+   *
    * A generated page hoists one `useAction` per action, above every section that binds
    * it, so the confirmation text is a property of the action on that page rather than of
    * the section. Two sections asking for different text on the same action cannot both
    * be honoured, and silently picking one would ship a delete button with the wrong
-   * prompt — so it is reported here instead.
+   * prompt — so it is reported here instead. Forms and sort state are hoisted the same
+   * way and have the same problem.
    */
-  function checkPageActions(
+  function checkPageConsistency(
     route: string,
     placed: { path: Path; section: SectionSpec }[],
     report: typeof err,
@@ -237,6 +242,18 @@ export function validate(
         continue;
       }
       forms.add(section.submit);
+    }
+
+    // One sort state per page, kept under `?sort=` and `?dir=` in the query string, so
+    // it survives a refresh exactly as a filter does. Two sortable sections would write
+    // to the same two parameters and read each other's answer back.
+    const sortable = placed.filter((p) => p.section.sortable !== undefined);
+    for (const { path } of sortable.slice(1)) {
+      report(
+        "NOVA1011",
+        `page '${route}' has more than one sortable section, and a page holds one sort state`,
+        path,
+      );
     }
   }
 
@@ -311,6 +328,14 @@ export function validate(
         );
         continue;
       }
+      if (SORT_PROPS.includes(prop) && body.sortable !== undefined) {
+        report(
+          "NOVA1001",
+          `prop '${prop}' on a sortable section is supplied by nova from the page's sort state — remove it`,
+          [...path, key, prop],
+        );
+        continue;
+      }
       if (prop === "children") {
         const raw = body.children;
         if (!Array.isArray(raw)) {
@@ -336,6 +361,34 @@ export function validate(
 
     const section: SectionSpec = { component: ref, props, children };
     if (submit !== undefined) section.submit = submit;
+
+    if (body.sortable !== undefined) {
+      const raw = body.sortable;
+      if (!Array.isArray(raw) || raw.some((c) => typeof c !== "string")) {
+        report("NOVA1003", "'sortable' must be a list of column names", [...path, key, "sortable"]);
+      } else {
+        // `columns:` is an ordinary prop, not spec vocabulary — a host table is free to
+        // call it something else or feed it from a loader. Where the section does name a
+        // literal list, a sortable column outside it is certainly a typo and is reported;
+        // where it does not, there is nothing to check against and nothing is claimed.
+        const declared = props.columns;
+        const columns =
+          declared?.kind === "literal" && Array.isArray(declared.value)
+            ? declared.value.filter((c): c is string => typeof c === "string")
+            : null;
+        for (const column of raw as string[]) {
+          if (columns !== null && !columns.includes(column)) {
+            report(
+              "NOVA1009",
+              `'${column}' is sortable but is not one of '${key}'s columns (${columns.join(", ")})`,
+              [...path, key, "sortable"],
+              hintFor(column, columns),
+            );
+          }
+        }
+        section.sortable = raw as string[];
+      }
+    }
 
     if (rawFields !== undefined) {
       if (submit === undefined) {

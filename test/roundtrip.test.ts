@@ -139,6 +139,35 @@ describe("actions, compute bindings and nested children", () => {
   });
 });
 
+describe("table sorting", () => {
+  it("hands sort state to the table and keeps it in the URL, clean under the strict host", async () => {
+    const appDir = app("app-sort");
+    const result = await compileApp(appDir, {
+      ...withForms(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain("const sortState = useSort();");
+    expect(pages).toContain("onSort={sortState.set}");
+    expect(pages).toContain("sort={sortState.value}");
+    // `sortable` is forwarded too — the table decides which headers are clickable.
+    expect(pages).toContain('sortable={["date","km"]}');
+    const runtime = result.files.find((f) => f.name === "runtime.tsx")!.text;
+    expect(runtime).toContain("export function useSort");
+    expect(runtime).toContain("window.history.replaceState");
+  });
+
+  it("emits no sort machinery for an app with no sortable section", async () => {
+    const appDir = app("app-basic");
+    const result = await compileApp(appDir, configFor(appDir));
+    for (const name of ["runtime.tsx", "pages.tsx"]) {
+      expect(result.files.find((f) => f.name === name)!.text).not.toContain("useSort");
+    }
+  });
+});
+
 describe("forms", () => {
   /** The fixture spec with one substitution applied, written back into the copied app. */
   function edit(appDir: string, from: string, to: string): void {

@@ -143,3 +143,41 @@ export function Formatter(props: {
     </p>
   );
 }
+
+/**
+ * A table that sorts its own rows. Nova owns the sort state and its round trip through
+ * the URL; which header is clickable and how the rows are ordered stay the component's
+ * business (D3). `sort`'s shape is declared here, by the host — nova ships no types.
+ */
+export function SortableTable(props: {
+  rows: Array<Record<string, unknown>>;
+  columns: string[];
+  sortable: string[];
+  sort: { column: string; direction: "asc" | "desc" } | null;
+  onSort: (column: string) => void;
+}): React.ReactElement {
+  return (
+    <table data-sort={props.sort === null ? "" : `${props.sort.column}:${props.sort.direction}`}>
+      <thead>
+        <tr>
+          {props.columns.map((c) => (
+            <th key={c}>
+              {props.sortable.includes(c) ? (
+                <button type="button" onClick={() => props.onSort(c)}>
+                  {c}
+                </button>
+              ) : (
+                c
+              )}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>{props.rows.length}</td>
+        </tr>
+      </tbody>
+    </table>
+  );
+}

@@ -273,6 +273,63 @@ describe("validate", () => {
     expect(diagnostics[0]!.message).toContain("saveTrip");
   });
 
+  const SORT = [
+    "pages:",
+    '  "/":',
+    "    sections:",
+    "      - Table:",
+    "          rows: data#trips",
+    "          columns: [date, km]",
+    "          sortable: [date]",
+    "",
+  ].join("\n");
+
+  it("records sortable columns and still forwards the list as a prop", () => {
+    const { spec, diagnostics } = check(SORT);
+    expect(diagnostics).toEqual([]);
+    const section = spec!.pages[0]!.sections[0]!;
+    expect(section.sortable).toEqual(["date"]);
+    // Wiring *and* an ordinary prop, like a field's `name`: the table needs to know
+    // which headers are clickable.
+    expect(section.props.sortable).toEqual({ kind: "literal", value: ["date"] });
+  });
+
+  it("reports a sortable column the section's own columns list does not have", () => {
+    const { diagnostics } = check(SORT.replace("sortable: [date]", "sortable: [date, distance]"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1009"]);
+    expect(diagnostics[0]!.message).toContain("distance");
+  });
+
+  it("accepts sortable columns when the section names no columns to check against", () => {
+    // `columns:` is an ordinary prop, not spec vocabulary — a host table may call it
+    // something else, or supply it from a loader. The subset check applies where there
+    // is a literal list to check against, and is silent where there is not.
+    const { diagnostics } = check(
+      SORT.replace("          columns: [date, km]\n", "").replace(
+        "sortable: [date]",
+        "sortable: [anything]",
+      ),
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
+  it("reports a sortable that is not a list of strings", () => {
+    const { diagnostics } = check(SORT.replace("sortable: [date]", "sortable: date"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1003"]);
+  });
+
+  it("reports two sortable sections on one page", () => {
+    // One sort state per page, kept under `?sort=&dir=`. Two tables would fight over it.
+    const { diagnostics } = check(SORT + SORT.split("\n").slice(3).join("\n"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1011"]);
+  });
+
+  it("reports a sort prop nova supplies itself", () => {
+    const { diagnostics } = check(SORT.replace("sortable: [date]", "sortable: [date]\n          onSort: x"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1001"]);
+    expect(diagnostics[0]!.message).toContain("'onSort'");
+  });
+
   it("collects every problem rather than stopping at the first", () => {
     const { diagnostics } = check(
       'pages:\n  "/":\n    titel: a\n    sections: "nope"\n  bad:\n    sections: []\n',

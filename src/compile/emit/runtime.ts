@@ -139,6 +139,49 @@ const USE_ACTION = [
   "}",
 ];
 
+const USE_SORT = [
+  "export type SortState = { column: string; direction: 'asc' | 'desc' } | null;",
+  "",
+  "/**",
+  " * Which column a page is sorted by, kept in the query string beside its filters so a",
+  " * refresh preserves it. Selecting the current column reverses it.",
+  " *",
+  " * Ordering the rows is the table component's business; this owns only the state and",
+  " * its round trip through the URL.",
+  " */",
+  "export function useSort(): { value: SortState; set(column: string): void } {",
+  "  const read = React.useCallback((): SortState => {",
+  "    const search = new URLSearchParams(window.location.search);",
+  "    const column = search.get('sort');",
+  "    return column === null",
+  "      ? null",
+  "      : { column, direction: search.get('dir') === 'desc' ? 'desc' : 'asc' };",
+  "  }, []);",
+  "",
+  "  const [value, setValue] = React.useState<SortState>(read);",
+  "  React.useEffect(() => {",
+  "    const onPop = () => setValue(read());",
+  "    window.addEventListener('popstate', onPop);",
+  "    return () => window.removeEventListener('popstate', onPop);",
+  "  }, [read]);",
+  "",
+  "  // The URL is the source of truth for the direction to flip, so this reads it rather",
+  "  // than a setState updater — an updater may be re-run, and writing history from",
+  "  // inside one would push the same toggle twice.",
+  "  const set = React.useCallback((column: string) => {",
+  "    const search = new URLSearchParams(window.location.search);",
+  "    const direction =",
+  "      search.get('sort') === column && search.get('dir') !== 'desc' ? 'desc' : 'asc';",
+  "    search.set('sort', column);",
+  "    search.set('dir', direction);",
+  "    window.history.replaceState(null, '', `${window.location.pathname}?${search.toString()}`);",
+  "    setValue({ column, direction });",
+  "  }, []);",
+  "",
+  "  return { value, set };",
+  "}",
+];
+
 const USE_FORM = [
   "/**",
   " * One form's values, per-field errors, busy state and submission.",
@@ -202,6 +245,7 @@ export function emitRuntime(app: ResolvedApp, _config: NovaConfig): EmittedFile 
   const body = [
     ...(hooks.useLoader ? [USE_LOADER] : []),
     ...(hooks.useFilters ? [USE_FILTERS] : []),
+    ...(hooks.useSort ? [USE_SORT] : []),
     // useForm submits through useAction, so a form pulls it in even when no page calls
     // useAction directly — the one hook here that a page does not have to import.
     ...(hooks.useAction || hooks.useForm ? [USE_ACTION] : []),

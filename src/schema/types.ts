@@ -49,6 +49,13 @@ export type SectionSpec = {
   /** The form's fields. Only meaningful alongside `submit`. */
   fields?: FieldSpec[];
   /**
+   * `sortable: [date, km]` — the columns this section lets the reader sort by. Wiring
+   * *and* an ordinary prop: nova supplies `sort` and `onSort` from the page's sort
+   * state, and forwards the list itself so the component knows which headers to make
+   * clickable. Ordering the rows stays the component's business (D3).
+   */
+  sortable?: string[];
+  /**
    * `confirm: "Delete this trip?"` — the message a generated page shows before running
    * the one action this section binds. Consumed by nova (it becomes `useAction`'s /
    * `useForm`'s `opts.confirm`) rather than forwarded as a prop, since a host component

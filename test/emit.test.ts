@@ -131,6 +131,29 @@ describe("emitRuntime", () => {
     expect(text).not.toContain("export function use");
   });
 
+  it("emits exactly the hooks a page imports, and no others, as the surface grows", () => {
+    // The standing rule: every emitted line is reachable from a generated app. Each
+    // interaction added to the format is another hook that must not ride along into an
+    // app that never says the word. Asserted by exports rather than by substring so a
+    // new hook has to be added here deliberately.
+    const exportsOf = (text: string) =>
+      [...text.matchAll(/^export function (\w+)/gm)].map((m) => m[1]).sort();
+    expect(exportsOf(emitRuntime(resolved(), config).text)).toEqual(["useFilters", "useLoader"]);
+    expect(exportsOf(emitRuntime(resolvedFixture("app-form", withForms), withForms).text)).toEqual([
+      "useAction",
+      "useFilters",
+      "useForm",
+      "useLoader",
+    ]);
+    expect(exportsOf(emitRuntime(resolvedFixture("app-sort", withForms), withForms).text)).toEqual([
+      "useLoader",
+      "useSort",
+    ]);
+    expect(exportsOf(emitRuntime(resolvedFixture("app-zeroparam"), config).text)).toEqual([
+      "useLoader",
+    ]);
+  });
+
   it("keeps a hook that pages.tsx does import", () => {
     // Re-valued from a hand-patched `{ ...app, actions: ["saveTrip"] }` to a real fixture
     // whose spec binds an action to a prop. `useAction` is now decided by whether any
