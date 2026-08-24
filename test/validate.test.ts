@@ -184,6 +184,95 @@ describe("validate", () => {
     expect(diagnostics).toEqual([]);
   });
 
+  const FORM = [
+    "pages:",
+    '  "/":',
+    "    sections:",
+    "      - Form:",
+    "          submit: actions#saveTrip",
+    "          fields:",
+    "            - DateField: { name: date, label: Date }",
+    "            - NumberField: { name: km, initial: 0 }",
+    "",
+  ].join("\n");
+
+  it("normalises a form section into a submit action and a field list", () => {
+    const { spec, diagnostics } = check(FORM);
+    expect(diagnostics).toEqual([]);
+    const section = spec!.pages[0]!.sections[0]!;
+    expect(section.submit).toBe("saveTrip");
+    // Neither `submit` nor `fields` is forwarded as a prop.
+    expect(Object.keys(section.props)).toEqual([]);
+    expect(section.fields).toHaveLength(2);
+    expect(section.fields![0]).toEqual({
+      component: { kind: "catalog", name: "DateField" },
+      name: "date",
+      // A field with no `initial` starts empty, which is right for the text-shaped
+      // fields that make up most of a form; a NumberField says so explicitly, and gets
+      // a type error at the form line if it does not.
+      initial: "",
+      props: { label: { kind: "literal", value: "Date" }, name: { kind: "literal", value: "date" } },
+    });
+    expect(section.fields![1]!.initial).toBe(0);
+  });
+
+  it("reports 'fields' on a section that does not submit an action", () => {
+    const { diagnostics } = check(
+      'pages:\n  "/":\n    sections:\n      - Form:\n          fields:\n            - TextField: { name: a }\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1002"]);
+    expect(diagnostics[0]!.message).toContain("submit");
+  });
+
+  it("reports a 'submit' that is not an actions# binding", () => {
+    const { diagnostics } = check(
+      'pages:\n  "/":\n    sections:\n      - Form: { submit: data#trips }\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1003"]);
+    expect(diagnostics[0]!.message).toContain("submit");
+  });
+
+  it("reports a field with no name", () => {
+    const { diagnostics } = check(FORM.replace("{ name: date, label: Date }", "{ label: Date }"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1002"]);
+    expect(diagnostics[0]!.message).toContain("name");
+  });
+
+  it("reports two fields editing the same key", () => {
+    const { diagnostics } = check(FORM.replace("name: km", "name: date"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1008"]);
+    expect(diagnostics[0]!.message).toContain("date");
+  });
+
+  it("reports a field prop nova supplies itself", () => {
+    const { diagnostics } = check(FORM.replace("label: Date", "value: nope"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1001"]);
+    expect(diagnostics[0]!.message).toContain("'value'");
+  });
+
+  it("reports a form prop nova supplies itself", () => {
+    const { diagnostics } = check(FORM.replace("submit: actions#saveTrip", "submit: actions#saveTrip\n          busy: true"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1001"]);
+    expect(diagnostics[0]!.message).toContain("'busy'");
+  });
+
+  it("reports two forms on one page submitting the same action", () => {
+    // Each form hoists `const <action>Form = useForm(...)`, so two would redeclare it —
+    // a nova bug surfacing as a TypeScript error against the author's spec.
+    const { diagnostics } = check(
+      [
+        "pages:",
+        '  "/":',
+        "    sections:",
+        "      - Form: { submit: actions#saveTrip }",
+        "      - Form: { submit: actions#saveTrip }",
+        "",
+      ].join("\n"),
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1010"]);
+    expect(diagnostics[0]!.message).toContain("saveTrip");
+  });
+
   it("collects every problem rather than stopping at the first", () => {
     const { diagnostics } = check(
       'pages:\n  "/":\n    titel: a\n    sections: "nope"\n  bad:\n    sections: []\n',

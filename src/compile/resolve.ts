@@ -1,6 +1,6 @@
 import { extname, join, relative, sep } from "node:path";
 import { diagnostic, suggest, type Diagnostic, type SpecPath } from "../schema/diagnostic.js";
-import type { AppSpec, PageSpec, SectionSpec } from "../schema/types.js";
+import { componentKey, type AppSpec, type PageSpec, type PropValue, type SectionSpec } from "../schema/types.js";
 import { isComponentName, type Catalog } from "./catalog.js";
 import type { NovaConfig } from "./config.js";
 import type { PositionMap } from "./load.js";
@@ -11,6 +11,9 @@ export type { SpecPath };
 function collectLocalModules(sections: SectionSpec[], into: Set<string>): void {
   for (const section of sections) {
     if (section.component.kind === "local") into.add(section.component.module);
+    for (const field of section.fields ?? []) {
+      if (field.component.kind === "local") into.add(field.component.module);
+    }
     collectLocalModules(section.children, into);
   }
 }
@@ -27,6 +30,12 @@ export type ResolvedApp = {
    * declared parameters (0) is called with no argument, and gets a plain `Input` type
    * instead of indexing into an empty `Parameters<...>` tuple. */
   loaderArity: Record<string, number>;
+  /** Actions reached through a form's `submit:`, in sorted order. Only these need an
+   * `${Cap}Input` type emitted, since only a form indexes into the action's input. */
+  formActions: string[];
+  /** Parameter count of each form action's underlying actions.ts export, for the same
+   * empty-tuple reason `loaderArity` exists. */
+  actionArity: Record<string, number>;
   /** First spec location that referenced each loader/action, used to give contract
    * diagnostics (arity, non-async) a real position instead of the document root. */
   loaderOrigins: Record<string, SpecPath>;
@@ -92,6 +101,8 @@ export function resolveApp(
   const actions = new Set<string>();
   const computes = new Set<string>();
   const loaderArity: Record<string, number> = {};
+  const formActions = new Set<string>();
+  const actionArity: Record<string, number> = {};
   const loaderOrigins: Record<string, SpecPath> = {};
   const actionOrigins: Record<string, SpecPath> = {};
   const computeOrigins: Record<string, SpecPath> = {};
@@ -238,6 +249,8 @@ export function resolveApp(
           actions: sorted(actions),
           computes: sorted(computes),
           loaderArity,
+          formActions: sorted(formActions),
+          actionArity,
           loaderOrigins,
           actionOrigins,
         },
@@ -253,97 +266,140 @@ export function resolveApp(
   ): void {
     sections.forEach((section, i) => {
       const at = [...path, i];
-      if (section.component.kind === "catalog") {
-        const name = section.component.name;
-        const entry = ctx.catalog.get(name);
-        if (!entry) {
-          const s = suggest(name, ctx.catalog.names());
-          out.push(
-            diagnostic("NOVA2001", `unknown component '${name}'`, ctx.positions.at(at), {
-              hint:
-                s === undefined
-                  ? `available: ${ctx.catalog.names().join(", ")}`
-                  : `did you mean '${s}'?`,
-            }),
-          );
+      resolveComponent(section.component, at);
+
+      // A form's `submit:` reaches actions.ts exactly as a prop binding does — the POST
+      // handler, the contract binding and the emitted `${Cap}Input` type all come from
+      // here — but it also records the arity, because `useForm` indexes into the
+      // action's parameter tuple and a zero-parameter action has no element there.
+      if (section.submit !== undefined) {
+        const name = section.submit;
+        const submitAt = ctx.positions.at([...at, componentKey(section.component), "submit"]);
+        if (!actionExports.has(name)) {
+          report("NOVA2003", `actions.ts has no export '${name}'`, submitAt, actionExports, name);
         } else {
-          addComponent(name, specifierFromOutDir(entry.module, entry.file), ctx.positions.at(at));
-        }
-      } else {
-        const { module, name } = section.component;
-        const resolvedFile = localModuleFiles.get(module) ?? null;
-        if (resolvedFile === null) {
-          out.push(
-            diagnostic(
-              "NOVA2007",
-              `local component module '${module}' cannot be resolved`,
-              ctx.positions.at(at),
-            ),
-          );
-        } else {
-          const qualifying = (
-            localHandle ? moduleExports(localHandle.program, resolvedFile) : []
-          ).filter((e) => e.callable && isComponentName(e.name));
-          if (!qualifying.some((e) => e.name === name)) {
-            const s = suggest(name, qualifying.map((e) => e.name));
-            out.push(
-              diagnostic(
-                "NOVA2008",
-                `module '${module}' has no component export '${name}'`,
-                ctx.positions.at(at),
-                s === undefined ? {} : { hint: `did you mean '${s}'?` },
-              ),
-            );
-          } else {
-            addComponent(name, specifierFromOutDir(module, resolvedFile), ctx.positions.at(at));
+          actions.add(name);
+          formActions.add(name);
+          actionArity[name] ??= actionExports.get(name)!.paramCount;
+          if (actionOrigins[name] === undefined) {
+            actionOrigins[name] = [...at, componentKey(section.component), "submit"];
           }
         }
       }
 
-      for (const propName of Object.keys(section.props).sort()) {
-        const value = section.props[propName]!;
-        if (value.kind !== "binding") continue;
-        const ref = value.ref;
-        const propAt = ctx.positions.at([...at, propName]);
-        if (ref.kind === "data") {
-          if (!dataExports.has(ref.name)) {
-            report("NOVA2002", `data.ts has no export '${ref.name}'`, propAt, dataExports, ref.name);
-          } else {
-            loaders.add(ref.name);
-            if (loaderArity[ref.name] === undefined) {
-              loaderArity[ref.name] = dataExports.get(ref.name)!.paramCount;
-            }
-            if (loaderOrigins[ref.name] === undefined) loaderOrigins[ref.name] = [...at, propName];
-          }
-        } else if (ref.kind === "actions") {
-          if (!actionExports.has(ref.name)) {
-            report("NOVA2003", `actions.ts has no export '${ref.name}'`, propAt, actionExports, ref.name);
-          } else {
-            actions.add(ref.name);
-            if (actionOrigins[ref.name] === undefined) actionOrigins[ref.name] = [...at, propName];
-          }
-        } else if (ref.kind === "compute") {
-          if (!computeExports.has(ref.name)) {
-            report("NOVA2004", `compute.ts has no export '${ref.name}'`, propAt, computeExports, ref.name);
-          } else {
-            computes.add(ref.name);
-            if (computeOrigins[ref.name] === undefined) computeOrigins[ref.name] = [...at, propName];
-          }
-        } else if (ref.kind === "param") {
-          if (!routeParams.has(ref.name)) {
-            out.push(
-              diagnostic("NOVA2005", `route '${page.route}' has no parameter ':${ref.name}'`, propAt),
-            );
-          }
-        } else if (!filterNames.has(ref.name)) {
-          out.push(
-            diagnostic("NOVA2006", `page '${page.route}' declares no filter '${ref.name}'`, propAt),
-          );
-        }
-      }
+      (section.fields ?? []).forEach((field, f) => {
+        const fieldAt = [...at, componentKey(section.component), "fields", f];
+        resolveComponent(field.component, fieldAt);
+        resolveBindings(field.props, fieldAt, page, routeParams, filterNames);
+      });
 
-      walk(section.children, page, routeParams, filterNames, [...at, "children"]);
+      resolveBindings(section.props, at, page, routeParams, filterNames);
+
+      walk(section.children, page, routeParams, filterNames, [
+        ...at,
+        componentKey(section.component),
+        "children",
+      ]);
     });
+  }
+
+  function resolveComponent(component: SectionSpec["component"], at: SpecPath): void {
+    if (component.kind === "catalog") {
+      const name = component.name;
+      const entry = ctx.catalog.get(name);
+      if (!entry) {
+        const s = suggest(name, ctx.catalog.names());
+        out.push(
+          diagnostic("NOVA2001", `unknown component '${name}'`, ctx.positions.at(at), {
+            hint:
+              s === undefined
+                ? `available: ${ctx.catalog.names().join(", ")}`
+                : `did you mean '${s}'?`,
+          }),
+        );
+      } else {
+        addComponent(name, specifierFromOutDir(entry.module, entry.file), ctx.positions.at(at));
+      }
+      return;
+    }
+    const { module, name } = component;
+    const resolvedFile = localModuleFiles.get(module) ?? null;
+    if (resolvedFile === null) {
+      out.push(
+        diagnostic(
+          "NOVA2007",
+          `local component module '${module}' cannot be resolved`,
+          ctx.positions.at(at),
+        ),
+      );
+      return;
+    }
+    const qualifying = (localHandle ? moduleExports(localHandle.program, resolvedFile) : []).filter(
+      (e) => e.callable && isComponentName(e.name),
+    );
+    if (!qualifying.some((e) => e.name === name)) {
+      const s = suggest(name, qualifying.map((e) => e.name));
+      out.push(
+        diagnostic(
+          "NOVA2008",
+          `module '${module}' has no component export '${name}'`,
+          ctx.positions.at(at),
+          s === undefined ? {} : { hint: `did you mean '${s}'?` },
+        ),
+      );
+      return;
+    }
+    addComponent(name, specifierFromOutDir(module, resolvedFile), ctx.positions.at(at));
+  }
+
+  function resolveBindings(
+    props: Record<string, PropValue>,
+    at: SpecPath,
+    page: PageSpec,
+    routeParams: Set<string>,
+    filterNames: Set<string>,
+  ): void {
+    for (const propName of Object.keys(props).sort()) {
+      const value = props[propName]!;
+      if (value.kind !== "binding") continue;
+      const ref = value.ref;
+      const propAt = ctx.positions.at([...at, propName]);
+      if (ref.kind === "data") {
+        if (!dataExports.has(ref.name)) {
+          report("NOVA2002", `data.ts has no export '${ref.name}'`, propAt, dataExports, ref.name);
+        } else {
+          loaders.add(ref.name);
+          if (loaderArity[ref.name] === undefined) {
+            loaderArity[ref.name] = dataExports.get(ref.name)!.paramCount;
+          }
+          if (loaderOrigins[ref.name] === undefined) loaderOrigins[ref.name] = [...at, propName];
+        }
+      } else if (ref.kind === "actions") {
+        if (!actionExports.has(ref.name)) {
+          report("NOVA2003", `actions.ts has no export '${ref.name}'`, propAt, actionExports, ref.name);
+        } else {
+          actions.add(ref.name);
+          if (actionOrigins[ref.name] === undefined) actionOrigins[ref.name] = [...at, propName];
+        }
+      } else if (ref.kind === "compute") {
+        if (!computeExports.has(ref.name)) {
+          report("NOVA2004", `compute.ts has no export '${ref.name}'`, propAt, computeExports, ref.name);
+        } else {
+          computes.add(ref.name);
+          if (computeOrigins[ref.name] === undefined) computeOrigins[ref.name] = [...at, propName];
+        }
+      } else if (ref.kind === "param") {
+        if (!routeParams.has(ref.name)) {
+          out.push(
+            diagnostic("NOVA2005", `route '${page.route}' has no parameter ':${ref.name}'`, propAt),
+          );
+        }
+      } else if (!filterNames.has(ref.name)) {
+        out.push(
+          diagnostic("NOVA2006", `page '${page.route}' declares no filter '${ref.name}'`, propAt),
+        );
+      }
+    }
   }
 
   function report(

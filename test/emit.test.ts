@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { readCatalogs } from "../src/compile/catalog.js";
 import type { NovaConfig } from "../src/compile/config.js";
 import { emitContract, emitHandlers, emitPages, emitRuntime, emitTypes } from "../src/compile/emit/index.js";
+import { hooksUsed } from "../src/compile/emit/pages.js";
 import { loadSpecFile, type PositionMap } from "../src/compile/load.js";
 import { resolveApp } from "../src/compile/resolve.js";
 import { typecheckEmitted } from "../src/compile/typecheck.js";
@@ -36,20 +37,23 @@ function resolved() {
 }
 
 /** Resolve any fixture app, for cases app-basic cannot express. */
-function resolvedFixture(name: string) {
+function resolvedFixture(name: string, cfg: NovaConfig = config) {
   const specFile = here(`./fixtures/${name}/app.yaml`);
   const source = readFileSync(specFile, "utf8");
   const { raw, positions } = loadSpecFile(specFile, source);
   const { spec } = validate(raw, positions);
-  const { catalog } = readCatalogs(config, specFile);
+  const { catalog } = readCatalogs(cfg, specFile);
   return resolveApp(spec!, {
-    config,
+    config: cfg,
     appDir: dirname(specFile),
     specFile,
     catalog,
     positions,
   }).resolved!;
 }
+
+/** Config including the second fixture catalog, for specs that use forms/actions. */
+const withForms: NovaConfig = { ...config, components: ["../catalog/ui", "../catalog/forms"] };
 
 function specPositions(): PositionMap {
   const source = readFileSync(SPEC_FILE, "utf8");
@@ -128,9 +132,22 @@ describe("emitRuntime", () => {
   });
 
   it("keeps a hook that pages.tsx does import", () => {
-    const app = resolved();
-    const { text } = emitRuntime({ ...app, actions: ["saveTrip"] }, config);
+    // Re-valued from a hand-patched `{ ...app, actions: ["saveTrip"] }` to a real fixture
+    // whose spec binds an action to a prop. `useAction` is now decided by whether any
+    // page emits a `useAction(` call, not by app.actions being non-empty — a form's
+    // action is submitted through useForm, and `pages.tsx` imports no useAction for it.
+    const { text } = emitRuntime(resolvedFixture("app-actions", withForms), withForms);
     expect(text).toContain("export function useAction");
+  });
+
+  it("emits useForm, and the useAction it submits through, only for an app with a form", () => {
+    const { text } = emitRuntime(resolvedFixture("app-form", withForms), withForms);
+    expect(text).toContain("export function useForm");
+    expect(text).toContain("export function useAction");
+    // And nothing else: app-form binds no action to a plain prop, so the only reason
+    // useAction is here at all is that useForm submits through it.
+    expect(resolvedFixture("app-form", withForms).actions).toEqual(["saveTrip"]);
+    expect(hooksUsed(resolvedFixture("app-form", withForms)).useAction).toBe(false);
   });
 });
 

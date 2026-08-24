@@ -9,6 +9,7 @@ import {
   parseBinding,
   parseComponentRef,
   type AppSpec,
+  type FieldSpec,
   type FilterSpec,
   type PageSpec,
   type PropValue,
@@ -17,6 +18,16 @@ import {
 
 const PAGE_KEYS = ["title", "filters", "sections"];
 const FILTER_KEYS = ["default"];
+
+/**
+ * Props a generated page supplies itself, and which a spec therefore must not also set.
+ *
+ * Silently letting the spec win would drop the wiring that makes a form a form; silently
+ * letting nova win would discard something the author wrote. Both are worse than saying
+ * so. This is the same class of problem as a filter named `set`, so it reuses NOVA1001.
+ */
+const FORM_PROPS = ["busy", "error", "onSubmit"];
+const FIELD_PROPS = ["error", "onChange", "value"];
 const ROUTE = /^\/$|^(?:\/(?:[A-Za-z0-9\-_]+|:[A-Za-z_$][A-Za-z0-9_$]*))+$/;
 
 // Iteration order below is intentionally inconsistent: loops that build the emitted AppSpec
@@ -28,12 +39,25 @@ type Path = SpecPath;
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
 
-/** Action names this section binds, through any prop. */
-function actionsBoundBy(section: SectionSpec): string[] {
+/**
+ * Action names this section binds through an ordinary prop.
+ *
+ * Kept separate from a form's `submit:` because the two reach the page differently: a
+ * prop binding shares the page's one hoisted `useAction` for that action, while a form
+ * gets its own `useForm`. Only the first can conflict with another section.
+ */
+function propActionsOf(section: SectionSpec): string[] {
   const names = new Set<string>();
   for (const value of Object.values(section.props)) {
     if (value.kind === "binding" && value.ref.kind === "actions") names.add(value.ref.name);
   }
+  return [...names].sort();
+}
+
+/** Every action this section runs, whether through a prop or through `submit:`. */
+function actionsBoundBy(section: SectionSpec): string[] {
+  const names = new Set(propActionsOf(section));
+  if (section.submit !== undefined) names.add(section.submit);
   return [...names].sort();
 }
 
@@ -183,7 +207,7 @@ export function validate(
     const seen = new Map<string, string | undefined>();
     const reported = new Set<string>();
     for (const { path, section } of placed) {
-      for (const name of actionsBoundBy(section)) {
+      for (const name of propActionsOf(section)) {
         if (!seen.has(name)) {
           seen.set(name, section.confirm);
           continue;
@@ -196,6 +220,23 @@ export function validate(
           path,
         );
       }
+    }
+
+    // Same shape of problem, same code: a page hoists one `const <action>Form` per form,
+    // so two forms submitting the same action would redeclare it — a nova bug that would
+    // otherwise reach the author as a TypeScript redeclaration error on their own spec.
+    const forms = new Set<string>();
+    for (const { path, section } of placed) {
+      if (section.submit === undefined) continue;
+      if (forms.has(section.submit)) {
+        report(
+          "NOVA1010",
+          `two forms on page '${route}' submit action '${section.submit}' — one useForm is hoisted per action, so give one of them its own action`,
+          path,
+        );
+        continue;
+      }
+      forms.add(section.submit);
     }
   }
 
@@ -242,7 +283,34 @@ export function validate(
     const props: Record<string, PropValue> = {};
     const children: SectionSpec[] = [];
     let confirm: string | undefined;
+    let submit: string | undefined;
+    let rawFields: unknown;
     for (const prop of Object.keys(body).sort()) {
+      if (prop === "submit") {
+        const ref = typeof body.submit === "string" ? parseBinding(body.submit) : null;
+        if (ref === null || ref.kind !== "actions") {
+          report(
+            "NOVA1003",
+            `'submit' must be an actions# binding, which is what makes '${key}' a form`,
+            [...path, key, "submit"],
+          );
+        } else {
+          submit = ref.name;
+        }
+        continue;
+      }
+      if (prop === "fields") {
+        rawFields = body.fields;
+        continue;
+      }
+      if (FORM_PROPS.includes(prop) && body.submit !== undefined) {
+        report(
+          "NOVA1001",
+          `prop '${prop}' on a form is supplied by nova from its useForm state — remove it`,
+          [...path, key, prop],
+        );
+        continue;
+      }
       if (prop === "children") {
         const raw = body.children;
         if (!Array.isArray(raw)) {
@@ -267,6 +335,41 @@ export function validate(
     }
 
     const section: SectionSpec = { component: ref, props, children };
+    if (submit !== undefined) section.submit = submit;
+
+    if (rawFields !== undefined) {
+      if (submit === undefined) {
+        report(
+          "NOVA1002",
+          `'${key}' has fields but is missing required key 'submit' — a field edits a key of the action's input, so there has to be an action`,
+          [...path, key, "fields"],
+        );
+      } else if (!Array.isArray(rawFields)) {
+        report("NOVA1003", "'fields' must be a list", [...path, key, "fields"]);
+      } else {
+        const fields: FieldSpec[] = [];
+        const names = new Set<string>();
+        rawFields.forEach((raw, i) => {
+          const field = validateField(raw, [...path, key, "fields", i], report);
+          if (!field) return;
+          if (names.has(field.name)) {
+            // Two fields on one key emit a duplicate property in useForm's initial
+            // object, which TypeScript reports against the form rather than the field
+            // that actually repeats.
+            report(
+              "NOVA1008",
+              `two fields edit '${field.name}' — a form holds one value per key of the action's input`,
+              [...path, key, "fields", i],
+            );
+            return;
+          }
+          names.add(field.name);
+          fields.push(field);
+        });
+        section.fields = fields;
+      }
+    }
+
     if (confirm !== undefined) {
       // A confirmation guards an action, so there has to be exactly one to guard. Zero is
       // a spec that reads as if it confirms something and does not; more than one is
@@ -285,6 +388,65 @@ export function validate(
       }
     }
     return place(section);
+  }
+
+  /**
+   * One form field: the same single-key component mapping a section uses, plus a required
+   * `name` naming the key of the action's input it edits, and an optional `initial`.
+   *
+   * `name` is checked here only for being present and a string. That it is a key the
+   * action actually accepts is TypeScript's job (D5): the emitted `values[...]` /
+   * `set(...)` calls are checked against the action's own declared input type, and the
+   * diagnostic is remapped to this field's line.
+   */
+  function validateField(value: unknown, path: Path, report: typeof err): FieldSpec | null {
+    if (!isRecord(value)) {
+      report("NOVA1003", "a field must be a single-key mapping", path);
+      return null;
+    }
+    const keys = Object.keys(value);
+    if (keys.length !== 1) {
+      report("NOVA1003", `a field must have exactly one key, found ${keys.length}`, path);
+      return null;
+    }
+    const key = keys[0]!;
+    const ref = parseComponentRef(key);
+    if (!ref) {
+      report("NOVA1004", `'${key}' is not a component reference`, [...path, key], componentHint(key));
+      return null;
+    }
+    const body = value[key];
+    if (!isRecord(body)) {
+      report("NOVA1003", `props for field '${key}' must be a mapping`, [...path, key]);
+      return null;
+    }
+    if (body.name === undefined) {
+      report(
+        "NOVA1002",
+        `field '${key}' is missing required key 'name' — the key of the action's input it edits`,
+        [...path, key],
+      );
+      return null;
+    }
+    if (typeof body.name !== "string") {
+      report("NOVA1003", "'name' must be a string", [...path, key, "name"]);
+      return null;
+    }
+
+    const props: Record<string, PropValue> = {};
+    for (const prop of Object.keys(body).sort()) {
+      if (prop === "initial") continue;
+      if (FIELD_PROPS.includes(prop)) {
+        report(
+          "NOVA1001",
+          `prop '${prop}' on a field is supplied by nova from its form state — remove it`,
+          [...path, key, prop],
+        );
+        continue;
+      }
+      props[prop] = toPropValue(body[prop]);
+    }
+    return { component: ref, name: body.name, initial: body.initial ?? "", props };
   }
 
   function componentHint(text: string): string | undefined {

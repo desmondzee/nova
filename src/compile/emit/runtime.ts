@@ -139,6 +139,50 @@ const USE_ACTION = [
   "}",
 ];
 
+const USE_FORM = [
+  "/**",
+  " * One form's values, per-field errors, busy state and submission.",
+  " *",
+  " * `T` is the action's own declared input type, so `values[k]` and `set(k, v)` are",
+  " * checked against it: a field naming a key the action does not accept, or bound to a",
+  " * component whose value type does not match the key's, is a compile error.",
+  " *",
+  " * `T extends object` rather than `Record<string, unknown>` — an interface gets no",
+  " * implicit index signature, so the stricter constraint would reject an action whose",
+  " * input is declared as one, which is entirely ordinary.",
+  " */",
+  "export function useForm<T extends object>(",
+  "  path: string,",
+  "  initial: T,",
+  "  opts: { confirm?: string } = {},",
+  "): {",
+  "  values: T;",
+  "  errors: Partial<Record<keyof T & string, string>>;",
+  "  busy: boolean;",
+  "  error: string | null;",
+  "  set<K extends keyof T & string>(key: K, value: T[K]): void;",
+  "  submit(): Promise<boolean>;",
+  "} {",
+  "  const action = useAction(path, opts);",
+  "  const [values, setValues] = React.useState<T>(initial);",
+  "  const set = React.useCallback(<K extends keyof T & string>(key: K, value: T[K]): void => {",
+  "    setValues((v) => ({ ...v, [key]: value }) as T);",
+  "  }, []);",
+  "  const submit = React.useCallback(() => action.run(values), [action, values]);",
+  "  return {",
+  "    values,",
+  "    // The action reports errors keyed by whatever strings it likes. That they are T's",
+  "    // keys is the one thing here TypeScript cannot know, so it is asserted once, here,",
+  "    // rather than at every field.",
+  "    errors: action.fieldErrors as Partial<Record<keyof T & string, string>>,",
+  "    busy: action.busy,",
+  "    error: action.error,",
+  "    set,",
+  "    submit,",
+  "  };",
+  "}",
+];
+
 /**
  * Emits only the hooks this app's `pages.tsx` will import, decided by the same
  * `hooksUsed` predicate that decides the import list itself — so the two files agree by
@@ -158,7 +202,10 @@ export function emitRuntime(app: ResolvedApp, _config: NovaConfig): EmittedFile 
   const body = [
     ...(hooks.useLoader ? [USE_LOADER] : []),
     ...(hooks.useFilters ? [USE_FILTERS] : []),
-    ...(hooks.useAction ? [USE_ACTION] : []),
+    // useForm submits through useAction, so a form pulls it in even when no page calls
+    // useAction directly — the one hook here that a page does not have to import.
+    ...(hooks.useAction || hooks.useForm ? [USE_ACTION] : []),
+    ...(hooks.useForm ? [USE_FORM] : []),
   ];
 
   if (body.length === 0) {

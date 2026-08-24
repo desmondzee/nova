@@ -28,6 +28,94 @@ export function ActionButton(props: {
   );
 }
 
+// The form contract a host catalog has to satisfy: a form shell taking `onSubmit`,
+// `busy` and `error`, and fields taking `name`, `value`, `onChange` and `error`. Field
+// components differ only in the type they carry — which is exactly what makes a
+// NumberField on a string input a compile error.
+
+export function Form(props: {
+  busy: boolean;
+  error: string | null;
+  onSubmit: () => Promise<boolean>;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <section>
+      {props.error === null ? null : <p role="alert">{props.error}</p>}
+      {props.children}
+      <button type="button" disabled={props.busy} onClick={() => void props.onSubmit()}>
+        Save
+      </button>
+    </section>
+  );
+}
+
+export function TextField(props: {
+  name: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+}): React.ReactElement {
+  return (
+    <label htmlFor={props.name}>
+      {props.label}
+      <button type="button" onClick={() => props.onChange(props.value)}>
+        {props.value}
+      </button>
+      {props.error === undefined ? null : <em>{props.error}</em>}
+    </label>
+  );
+}
+
+export function DateField(props: {
+  name: string;
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+}): React.ReactElement {
+  return <TextField {...props} />;
+}
+
+/** A field whose own props bind too — `options` comes from a loader. */
+export function SelectField(props: {
+  name: string;
+  label: string;
+  options: string[];
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+}): React.ReactElement {
+  return (
+    <label htmlFor={props.name}>
+      {props.label} ({props.options.length})
+      <button type="button" onClick={() => props.onChange(props.value)}>
+        {props.value}
+      </button>
+      {props.error === undefined ? null : <em>{props.error}</em>}
+    </label>
+  );
+}
+
+export function NumberField(props: {
+  name: string;
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+  error?: string;
+}): React.ReactElement {
+  return (
+    <label htmlFor={props.name}>
+      {props.label}
+      <button type="button" onClick={() => props.onChange(props.value)}>
+        {props.value}
+      </button>
+      {props.error === undefined ? null : <em>{props.error}</em>}
+    </label>
+  );
+}
+
 /** A filter widget: reads one filter value and writes it back. */
 export function FilterBar(props: {
   label: string;

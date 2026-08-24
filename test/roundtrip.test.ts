@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import type { NovaConfig } from "../src/compile/config.js";
 import { compileApp } from "../src/compile/index.js";
+import { loadSpecFile } from "../src/compile/load.js";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const fixturesDir = here("./fixtures/");
@@ -123,7 +124,153 @@ describe("actions, compute bindings and nested children", () => {
     const result = await compileApp(appDir, withForms(appDir));
     const file = result.files.find((f) => f.name === "pages.tsx")!;
     const lineNo = file.text.split("\n").findIndex((l) => l.includes("<Formatter ")) + 1;
-    expect(file.map.get(lineNo)).toEqual(["pages", "/", "sections", 0, "children", 1]);
+    // Re-valued: the path now carries the parent's own YAML key, because that is where
+    // the document holds the children — `sections[0].Panel.children[1]`. Without it,
+    // positions.at() found no node at ["…","sections",0,"children",1] and fell back to
+    // the parent section, so every diagnostic inside a nested section was reported
+    // against its container's line rather than its own.
+    expect(file.map.get(lineNo)).toEqual(["pages", "/", "sections", 0, "Panel", "children", 1]);
+    const positionOf = (path: (string | number)[]) =>
+      loadSpecFile(join(appDir, "app.yaml"), readFileSync(join(appDir, "app.yaml"), "utf8")).positions.at(
+        path,
+      );
+    expect(positionOf(file.map.get(lineNo)!).line).toBe(13);
+    expect(positionOf(["pages", "/", "sections", 0]).line).toBe(7);
+  });
+});
+
+describe("forms", () => {
+  /** The fixture spec with one substitution applied, written back into the copied app. */
+  function edit(appDir: string, from: string, to: string): void {
+    const specFile = join(appDir, "app.yaml");
+    const source = readFileSync(specFile, "utf8");
+    expect(source).toContain(from);
+    writeFileSync(specFile, source.replace(from, to));
+  }
+
+  it("compiles a form clean under the strict host tsconfig", async () => {
+    const appDir = app("app-form");
+    const result = await compileApp(appDir, {
+      ...withForms(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("holds the form's values in useForm, typed by the action's own input", async () => {
+    const appDir = app("app-form");
+    const result = await compileApp(appDir, withForms(appDir));
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain(
+      'const saveTripForm = useForm<SaveTripInput>("/_actions/saveTrip", { "date": "", "km": 0, "purpose": "" }, { confirm: "Save this trip?" });',
+    );
+    const types = result.files.find((f) => f.name === "types.ts")!.text;
+    expect(types).toContain(
+      "export type SaveTripInput = Parameters<typeof actions.saveTrip>[0];",
+    );
+  });
+
+  it("wires each field's value, change and error to the form state", async () => {
+    const appDir = app("app-form");
+    const result = await compileApp(appDir, withForms(appDir));
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain(
+      '<NumberField error={saveTripForm.errors["km"]} label={"Distance (km)"} name={"km"} onChange={(value) => saveTripForm.set("km", value)} value={saveTripForm.values["km"]} />',
+    );
+    // The form shell gets the submit callback, the busy flag and the form-level error.
+    expect(pages).toContain(
+      "<Form busy={saveTripForm.busy} error={saveTripForm.error} onSubmit={saveTripForm.submit}>",
+    );
+    // `initial` is nova's, not the component's: it seeds useForm and is not forwarded.
+    expect(pages).not.toContain("initial=");
+    // A form's action still gets its POST handler.
+    const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
+    expect(handlers).toContain('"POST /_actions/saveTrip"');
+  });
+
+  it("discovers a loader bound by a field's own prop", async () => {
+    // Every walker that finds loaders, filters and route params has to descend into
+    // `fields:` as well as `children:`. Miss it and the page references `purposes.value`
+    // with no `const purposes = useLoader(...)` ever declared.
+    const appDir = app("app-form");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain(
+      'const purposes = useLoader<Purposes, PurposesInput>("/_data/purposes", { "month": filters["month"] });',
+    );
+    expect(pages).toContain("options={purposes.value}");
+    const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
+    expect(handlers).toContain('"GET /_data/purposes"');
+  });
+
+  it("reports a field naming a key the action does not accept, at that field's line", async () => {
+    // The whole point of the form surface: `name:` is a key of the action's input type,
+    // checked by TypeScript, not a string that fails at runtime.
+    const appDir = app("app-form");
+    edit(appDir, "name: km,", "name: kmm,");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const detail = JSON.stringify(result.diagnostics, null, 2);
+    // Reported twice over, at two useful places. On the `- NumberField:` field entry
+    // itself (line 10): `values["kmm"]`, `set("kmm", …)` and `errors["kmm"]` are all
+    // indexed against the action's input type.
+    const atField = result.diagnostics.filter((d) => d.code === "NOVA3001" && d.line === 12);
+    expect(atField.length, detail).toBeGreaterThan(0);
+    for (const d of atField) {
+      expect(d.file).toBe(join(appDir, "app.yaml"));
+      expect(d.message).toContain("kmm");
+    }
+    // And on the `- Form:` section (line 5), where the assembled initial values no
+    // longer match the action's input.
+    const atForm = result.diagnostics.filter((d) => d.code === "NOVA3001" && d.line === 7);
+    expect(atForm.length, detail).toBeGreaterThan(0);
+    expect(result.diagnostics.filter((d) => d.code === "NOVA3002")).toEqual([]);
+  });
+
+  it("reports a form that does not cover every required key of the action's input", async () => {
+    const appDir = app("app-form");
+    edit(appDir, "            - SelectField: { name: purpose, label: Purpose, options: data#purposes }\n", "");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.message).toContain("purpose");
+    // Reported at the `- Form:` section, which is what is incomplete.
+    expect(bad!.line).toBe(7);
+  });
+
+  it("reports a field component whose value type does not match the input's", async () => {
+    const appDir = app("app-form");
+    edit(appDir, "- NumberField: { name: km,", "- TextField: { name: km,");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.line).toBe(12);
+  });
+
+  it("emits useForm only for an app that has a form", async () => {
+    const appDir = app("app-form");
+    const withFormRuntime = (await compileApp(appDir, withForms(appDir))).files.find(
+      (f) => f.name === "runtime.tsx",
+    )!.text;
+    expect(withFormRuntime).toContain("export function useForm");
+    // useForm submits through useAction, so that hook comes with it…
+    expect(withFormRuntime).toContain("export function useAction");
+    // …but pages.tsx must not import useAction, which no page here calls directly.
+    const pages = (await compileApp(appDir, withForms(appDir))).files.find(
+      (f) => f.name === "pages.tsx",
+    )!.text;
+    expect(pages).toContain("useForm");
+    expect(pages).not.toContain("useAction");
+
+    const plain = app("app-basic");
+    const plainRuntime = (await compileApp(plain, configFor(plain))).files.find(
+      (f) => f.name === "runtime.tsx",
+    )!.text;
+    expect(plainRuntime).not.toContain("useForm");
   });
 });
 

@@ -20,10 +20,34 @@ export type PropValue =
   | { kind: "literal"; value: unknown }
   | { kind: "binding"; ref: BindingRef };
 
+/**
+ * One input in a form: a component reference, the key of the action's input type it
+ * edits, and where that key starts.
+ *
+ * `name` is both the wiring and an ordinary prop — it is forwarded to the component (a
+ * field usually needs it for its label's `htmlFor`) *and* used to bind `value`,
+ * `onChange` and `error` against the action's declared input type.
+ */
+export type FieldSpec = {
+  component: ComponentRef;
+  name: string;
+  /** Starting value. Defaults to `""`, which is right for the text-shaped majority. */
+  initial: unknown;
+  props: Record<string, PropValue>;
+};
+
 export type SectionSpec = {
   component: ComponentRef;
   props: Record<string, PropValue>;
   children: SectionSpec[];
+  /**
+   * `submit: actions#saveTrip` — the action this section's form submits. Present iff the
+   * section is a form, which is what makes `fields:` meaningful and what makes nova
+   * supply `onSubmit`, `busy` and `error`.
+   */
+  submit?: string;
+  /** The form's fields. Only meaningful alongside `submit`. */
+  fields?: FieldSpec[];
   /**
    * `confirm: "Delete this trip?"` — the message a generated page shows before running
    * the one action this section binds. Consumed by nova (it becomes `useAction`'s /
@@ -101,4 +125,17 @@ export function parseComponentRef(text: string): ComponentRef | null {
   const name = text.slice(hash + 1);
   if (!module.startsWith(".") || !IDENT.test(name) || !upper(name)) return null;
   return { kind: "local", module, name };
+}
+
+/**
+ * The YAML key a component reference was written as — `Table`, or
+ * `./views/charts#BridgeChart`.
+ *
+ * `SectionSpec` keeps the parsed reference rather than the raw key, but a spec path used
+ * to look up a source position has to spell the document out exactly, and a section's
+ * props and children sit *under* that key. Reconstructed here, once, so the emitter and
+ * the resolver agree on it.
+ */
+export function componentKey(ref: ComponentRef): string {
+  return ref.kind === "catalog" ? ref.name : `${ref.module}#${ref.name}`;
 }

@@ -53,6 +53,16 @@ export function emitTypes(app: ResolvedApp, config: NovaConfig): EmittedFile {
   }
   for (const name of app.actions) {
     e.line(`export type ${cap(name)} = typeof actions.${name};`);
+    // Only a form needs the action's *input* type: `useForm<XInput>` is what makes each
+    // field's `name` a checked key of it. An action bound to a plain prop reaches the
+    // component as `.run` and never indexes into its input, so emitting an `Input` alias
+    // for one would be a line in every app that no emitted file imports.
+    if (!app.formActions.includes(name)) continue;
+    e.line(
+      app.actionArity[name] === 0
+        ? `export type ${cap(name)}Input = Record<string, never>;`
+        : `export type ${cap(name)}Input = Parameters<typeof actions.${name}>[0];`,
+    );
   }
   // No type is emitted for a `compute#` binding. pages.tsx imports the compute module
   // itself and references the function directly, so a `typeof compute.x` alias here was

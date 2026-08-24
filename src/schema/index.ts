@@ -7,11 +7,12 @@ export type {
   Severity,
   SpecPath,
 } from "./diagnostic.js";
-export { parseBinding, parseComponentRef } from "./types.js";
+export { componentKey, parseBinding, parseComponentRef } from "./types.js";
 export type {
   AppSpec,
   BindingRef,
   ComponentRef,
+  FieldSpec,
   FilterSpec,
   PageSpec,
   PropValue,

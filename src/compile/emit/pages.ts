@@ -1,4 +1,10 @@
-import type { PageSpec, PropValue, SectionSpec } from "../../schema/types.js";
+import {
+  componentKey,
+  type FieldSpec,
+  type PageSpec,
+  type PropValue,
+  type SectionSpec,
+} from "../../schema/types.js";
 import type { NovaConfig } from "../config.js";
 import type { ResolvedApp } from "../resolve.js";
 import { Emitter, type SpecPath } from "./emitter.js";
@@ -89,10 +95,11 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.line(`import { ${names.join(", ")} } from "${module}";`);
   }
   if (app.computes.length > 0) e.line(`import * as compute from "${appRel(config, "compute")}";`);
-  const { useAction, useFilters, useLoader } = hooksUsed(app);
+  const { useAction, useFilters, useForm, useLoader } = hooksUsed(app);
   const hooks = [
     ...(useAction ? ["useAction"] : []),
     ...(useFilters ? ["useFilters"] : []),
+    ...(useForm ? ["useForm"] : []),
     ...(useLoader ? ["useLoader"] : []),
   ];
   if (hooks.length > 0) e.line(`import { ${hooks.join(", ")} } from "${rel(config, "./runtime")}";`);
@@ -100,6 +107,9 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     const names =
       app.loaderArity[name] === 0 ? cap(name) : `${cap(name)}, ${cap(name)}Input`;
     e.line(`import type { ${names} } from "${rel(config, "./types")}";`);
+  }
+  for (const name of app.formActions) {
+    e.line(`import type { ${cap(name)}Input } from "${rel(config, "./types")}";`);
   }
   e.line();
 
@@ -166,6 +176,25 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
       const opts = confirm === undefined ? "" : `, { confirm: ${JSON.stringify(confirm)} }`;
       e.line(`const ${name}Action = useAction("/_actions/${name}"${opts});`);
     }
+    // One `useForm` per form, hoisted above the JSX like every other hook. The generic
+    // is the action's own input type, which is what makes each field's `name` a checked
+    // key of it — and makes the assembled initial-value object a completeness check on
+    // the form: a required input key no field covers is a missing property here,
+    // reported at this line, which maps back to the `- Form:` section.
+    for (const { section, path: formPath } of collectForms(page.sections, [...path, "sections"])) {
+      const action = section.submit!;
+      const initial = (section.fields ?? [])
+        .map((f) => `${JSON.stringify(f.name)}: ${JSON.stringify(f.initial)}`)
+        .join(", ");
+      const opts =
+        section.confirm === undefined ? "" : `, { confirm: ${JSON.stringify(section.confirm)} }`;
+      e.line(
+        `const ${action}Form = useForm<${cap(action)}Input>("/_actions/${action}", ${
+          initial === "" ? "{}" : `{ ${initial} }`
+        }${opts});`,
+        formPath,
+      );
+    }
     if (used.length > 0) {
       const anyError = used.map((n) => `${n}.error`).join(" ?? ");
       const anyValueNull = used.map((n) => `${n}.value === null`).join(" || ");
@@ -217,23 +246,90 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
 
   return { name: "pages.tsx", text: e.text(), map: e.map() };
 
+  /** `a={x} b={y}`, sorted by prop name so emission is byte-deterministic. */
+  function attrs(entries: Map<string, string>): string {
+    return [...entries.keys()]
+      .sort()
+      .map((p) => `${p}={${entries.get(p)!}}`)
+      .join(" ");
+  }
+
   function emitSection(section: SectionSpec, path: SpecPath): void {
     const name = section.component.name;
-    const props = Object.keys(section.props)
-      .sort()
-      .map((p) => `${p}={${expr(section.props[p]!)}}`)
-      .join(" ");
+    const entries = new Map<string, string>();
+    for (const p of Object.keys(section.props)) entries.set(p, expr(section.props[p]!));
+    if (section.submit !== undefined) {
+      // The form shell's half of the contract: run the submission, and show that it is
+      // running and whether it failed. `validate` has already rejected a spec that also
+      // sets any of these itself (NOVA1001).
+      const form = formLocal(section.submit);
+      entries.set("busy", `${form}.busy`);
+      entries.set("error", `${form}.error`);
+      entries.set("onSubmit", `${form}.submit`);
+    }
+    const props = attrs(entries);
     const open = props === "" ? `<${name}` : `<${name} ${props}`;
-    if (section.children.length === 0) {
+    const fields = section.fields ?? [];
+    if (fields.length === 0 && section.children.length === 0) {
       e.line(`${open} />`, path);
       return;
     }
     e.line(`${open}>`, path);
     e.indent();
-    section.children.forEach((child, i) => emitSection(child, [...path, "children", i]));
+    // Both nested paths carry the component's own YAML key, because that is where the
+    // document actually holds them: `sections[0].Panel.children[1]`. Without it,
+    // positions.at() finds no node and silently falls back to the parent section, so
+    // every diagnostic inside a nested section reported against its container.
+    const key = componentKey(section.component);
+    fields.forEach((field, i) => {
+      emitField(field, section.submit!, [...path, key, "fields", i]);
+    });
+    section.children.forEach((child, i) => emitSection(child, [...path, key, "children", i]));
     e.dedent();
     e.line(`</${name}>`, path);
   }
+
+  /**
+   * One field, bound to its key of the form's action input.
+   *
+   * `values[...]`, `set(...)` and `errors[...]` are all indexed by the same string
+   * literal, and `useForm`'s generic is the action's declared input type — so a `name:`
+   * the action does not accept is three type errors on this one line, all remapped to
+   * this field's own line in the spec. Indexed rather than dotted access so a key that
+   * is not a JavaScript identifier still emits valid, still-checked code.
+   */
+  function emitField(field: FieldSpec, action: string, path: SpecPath): void {
+    const form = formLocal(action);
+    const key = JSON.stringify(field.name);
+    const entries = new Map<string, string>();
+    for (const p of Object.keys(field.props)) entries.set(p, expr(field.props[p]!));
+    entries.set("value", `${form}.values[${key}]`);
+    // Unannotated on purpose: the parameter's type comes from the component's own
+    // `onChange` prop, so a NumberField bound to a string key is a type error here
+    // rather than a silent coercion.
+    entries.set("onChange", `(value) => ${form}.set(${key}, value)`);
+    entries.set("error", `${form}.errors[${key}]`);
+    e.line(`<${field.component.name} ${attrs(entries)} />`, path);
+  }
+}
+
+/** The page-local holding one form's state. One per action, per page. */
+const formLocal = (action: string) => `${action}Form`;
+
+/** Every form on a page, in document order, with the spec path of its section. */
+function collectForms(
+  sections: SectionSpec[],
+  path: SpecPath,
+): { section: SectionSpec; path: SpecPath }[] {
+  const out: { section: SectionSpec; path: SpecPath }[] = [];
+  sections.forEach((section, i) => {
+    const at = [...path, i];
+    if (section.submit !== undefined) out.push({ section, path: at });
+    out.push(
+      ...collectForms(section.children, [...at, componentKey(section.component), "children"]),
+    );
+  });
+  return out;
 }
 
 /**
@@ -251,11 +347,16 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
 export function hooksUsed(app: ResolvedApp): {
   useAction: boolean;
   useFilters: boolean;
+  useForm: boolean;
   useLoader: boolean;
 } {
   return {
-    useAction: app.actions.length > 0,
+    // "the app has actions" is not the same question: a form's action is submitted
+    // through `useForm`, so a page whose only action is a form's binds no `useAction`
+    // of its own and must not import one.
+    useAction: app.spec.pages.some((p) => collect(p.sections, "actions").length > 0),
     useFilters: app.spec.pages.some(pageNeedsFilters),
+    useForm: app.formActions.length > 0,
     useLoader: app.loaders.length > 0,
   };
 }
@@ -280,11 +381,18 @@ function collect(
   kind: "data" | "actions" | "filter" | "param",
 ): string[] {
   const found = new Set<string>();
+  const add = (props: Record<string, PropValue>) => {
+    for (const value of Object.values(props)) {
+      if (value.kind === "binding" && value.ref.kind === kind) found.add(value.ref.name);
+    }
+  };
   const walk = (list: SectionSpec[]) => {
     for (const s of list) {
-      for (const value of Object.values(s.props)) {
-        if (value.kind === "binding" && value.ref.kind === kind) found.add(value.ref.name);
-      }
+      add(s.props);
+      // A field's own props bind like any other: a select's options can come from a
+      // loader, its label from a filter. Skipping them here would leave the loader
+      // undiscovered and the emitted page referencing a local that was never declared.
+      for (const field of s.fields ?? []) add(field.props);
       walk(s.children);
     }
   };

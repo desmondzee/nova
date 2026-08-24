@@ -1,0 +1,13 @@
+pages:
+  "/":
+    title: New trip
+    filters:
+      month: { default: "2026-08" }
+    sections:
+      - Form:
+          submit: actions#saveTrip
+          confirm: Save this trip?
+          fields:
+            - DateField: { name: date, label: Date }
+            - NumberField: { name: km, label: "Distance (km)", initial: 0 }
+            - SelectField: { name: purpose, label: Purpose, options: data#purposes }
