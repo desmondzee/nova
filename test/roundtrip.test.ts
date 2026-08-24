@@ -141,6 +141,52 @@ describe("round trip", () => {
     expect(handlers).not.toContain("data.status(input");
   });
 
+  it("supplies a loader input from a route param, not from filters alone", async () => {
+    // §6.2: "Loader inputs are supplied from route params and filter values." This page
+    // declares no filters, so if params were still dropped the query would be `{}` and
+    // `trip(input: { id: string })` would be called with nothing.
+    const appDir = app("app-route-param");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain('const params_id = params["id"] ?? "";');
+    expect(pages).toContain('useLoader<Trip, TripInput>("/_data/trip", { "id": params_id });');
+  });
+
+  it("reports a loader input that neither params nor filters supply, at the spec line", async () => {
+    // Previously silent: the query object was typed `Record<string, string>`, so a
+    // loader declaring `{ month: string; region: string }` on a page with no filters
+    // compiled to `useLoader<Summary>("/_data/summary", {})` with zero diagnostics.
+    const appDir = app("app-missing-input");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.ok).toBe(false);
+    const missing = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(missing, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(missing!.file).toBe(join(appDir, "app.yaml"));
+    // The `- StatCard: { ..., value: data#summary }` section that named the loader.
+    expect(missing!.line).toBe(4);
+    expect(missing!.message).toContain("month");
+    // Not an unmapped "likely a nova bug" diagnostic pointing at generated code.
+    expect(result.diagnostics.filter((d) => d.code === "NOVA3002")).toEqual([]);
+  });
+
+  it("compiles clean under noUncheckedIndexedAccess for both filter and param access", async () => {
+    // The generated `filters["month"]` and `params.id` both produced `string | undefined`
+    // under this flag: the first as two unmapped NOVA3002s (a nova bug by the README's
+    // own definition), the second as a NOVA3001 the author had no way to satisfy.
+    // app-basic exercises both — filters feeding a loader on "/", a route param bound to
+    // a `string` prop on "/trip/:id".
+    const appDir = app("app-basic");
+    const config: NovaConfig = {
+      ...configFor(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    };
+    const result = await compileApp(appDir, config);
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
   it("reports a contract-only diagnostic at the spec binding, not app.yaml:1:1", async () => {
     // __contract.ts's `(input: TripsInput) => Promise<Trips> = data.trips` catches a
     // non-async loader (Trips and TripsInput are both derived from data.trips itself,

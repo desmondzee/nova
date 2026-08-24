@@ -7,6 +7,19 @@ import { HEADER, appRel, cap, rel, type EmittedFile } from "./types.js";
 const PAGES_TYPE =
   "Record<string, React.ComponentType<{ params: Record<string, string> }>>";
 
+const TITLES_TYPE = "Record<string, string>";
+
+/** Local holding one route param's value, narrowed to `string` exactly once per page. */
+const paramLocal = (name: string) => `params_${name}`;
+
+/** Route parameter names declared by a route, in declaration order. */
+function routeParamsOf(route: string): string[] {
+  return route
+    .split("/")
+    .filter((s) => s.startsWith(":"))
+    .map((s) => s.slice(1));
+}
+
 function expr(value: PropValue): string {
   if (value.kind === "literal") return JSON.stringify(value.value);
   const ref = value.ref;
@@ -18,7 +31,11 @@ function expr(value: PropValue): string {
     case "compute":
       return `compute.${ref.name}`;
     case "param":
-      return `params.${ref.name}`;
+      // A page's `params` is `Record<string, string>` (the shape §2 fixes for the pages
+      // map), so `params.id` is `string | undefined` under `noUncheckedIndexedAccess`.
+      // Every route param a page reads is narrowed once, into a local, at the top of the
+      // page function instead — see paramLocal below.
+      return paramLocal(ref.name);
     case "filter":
       return `filters.${ref.name}`;
   }
@@ -56,31 +73,67 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
   ];
   if (hooks.length > 0) e.line(`import { ${hooks.join(", ")} } from "${rel(config, "./runtime")}";`);
   for (const name of app.loaders) {
-    e.line(`import type { ${cap(name)} } from "${rel(config, "./types")}";`);
+    const names =
+      app.loaderArity[name] === 0 ? cap(name) : `${cap(name)}, ${cap(name)}Input`;
+    e.line(`import type { ${names} } from "${rel(config, "./types")}";`);
   }
   e.line();
 
   app.spec.pages.forEach((page, index) => {
     const path: SpecPath = ["pages", page.route];
     const used = usedLoaders(page.sections);
-    const usedActions = usedActionNames(page.sections);
+    const usedActions = collect(page.sections, "actions");
+    const routeParams = routeParamsOf(page.route);
+
+    // Every route param feeds the loader query (§6.2), so a page with any loader needs a
+    // local for each of them. A page with no loader needs one only for the params a prop
+    // actually binds — under `noUnusedLocals`, declaring the rest would fail the build.
+    const boundParams = new Set(collect(page.sections, "param"));
+    const paramLocals =
+      used.length > 0 ? routeParams : routeParams.filter((name) => boundParams.has(name));
 
     e.line(`function Page_${index}({ params }: { params: Record<string, string> }) {`, path);
     e.indent();
-    e.line("void params;");
+    // `params` is destructured out of the props object, so under `noUnusedLocals` it has
+    // to be read. Narrowing a route param into a local already reads it; only a page that
+    // narrows none needs the discard.
+    if (paramLocals.length === 0) e.line("void params;");
+    for (const name of [...paramLocals].sort()) {
+      e.line(`const ${paramLocal(name)} = params[${JSON.stringify(name)}] ?? "";`);
+    }
     if (pageNeedsFilters(page)) {
       const defaults = page.filters
         .map((f) => `${JSON.stringify(f.name)}: ${JSON.stringify(String(f.default ?? ""))}`)
         .join(", ");
       e.line(`const filters = useFilters({ ${defaults} });`);
     }
+    // §6.2: "Loader inputs are supplied from route params and filter values." A route
+    // param and a filter of the same name are the same input; the route param wins,
+    // because it comes from the URL path rather than from a query string the user can
+    // clear. Keys are sorted so the object is byte-identical across runs.
+    const queryEntries = new Map<string, string>();
+    for (const f of page.filters) queryEntries.set(f.name, `filters[${JSON.stringify(f.name)}]`);
+    for (const name of routeParams) queryEntries.set(name, paramLocal(name));
     const query =
-      page.filters.length > 0
-        ? `{ ${page.filters.map((f) => `${JSON.stringify(f.name)}: filters[${JSON.stringify(f.name)}]`).join(", ")} }`
-        : "{}";
+      queryEntries.size === 0
+        ? "{}"
+        : `{ ${[...queryEntries.keys()]
+            .sort()
+            .map((k) => `${JSON.stringify(k)}: ${queryEntries.get(k)!}`)
+            .join(", ")} }`;
     for (const name of used) {
+      // The second type argument is what makes the assembled query object a checked
+      // input rather than an untyped bag: `useLoader<T, Input>` takes
+      // `Record<string, string> & Input`, so a field the loader requires and neither a
+      // param nor a filter supplies is a type error — reported at the spec binding that
+      // named the loader, via the origin recorded here. A loader declared with no
+      // parameters is exempt: it is called with no argument at all (see handlers.ts),
+      // and its `Input` is `Record<string, never>`, which no filter value can satisfy.
+      const typeArgs =
+        app.loaderArity[name] === 0 ? `<${cap(name)}>` : `<${cap(name)}, ${cap(name)}Input>`;
       e.line(
-        `const ${name} = useLoader<${cap(name)}>("/_data/${name}", ${query});`,
+        `const ${name} = useLoader${typeArgs}("/_data/${name}", ${query});`,
+        app.loaderOrigins[name],
       );
     }
     for (const name of usedActions) {
@@ -150,11 +203,10 @@ function usedLoaders(sections: SectionSpec[]): string[] {
   return collect(sections, "data");
 }
 
-function usedActionNames(sections: SectionSpec[]): string[] {
-  return collect(sections, "actions");
-}
-
-function collect(sections: SectionSpec[], kind: "data" | "actions" | "filter"): string[] {
+function collect(
+  sections: SectionSpec[],
+  kind: "data" | "actions" | "filter" | "param",
+): string[] {
   const found = new Set<string>();
   const walk = (list: SectionSpec[]) => {
     for (const s of list) {

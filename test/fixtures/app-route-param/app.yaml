@@ -1,0 +1,4 @@
+pages:
+  "/trip/:id":
+    sections:
+      - StatCard: { label: Trip, value: data#trip.id }

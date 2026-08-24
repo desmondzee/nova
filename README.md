@@ -94,6 +94,18 @@ export async function trips(input: { month: string }): Promise<Array<{ date: str
 }
 ```
 
+## Loader inputs
+
+A loader's input object is assembled from the page's route params and its filter
+values, and is checked against the loader's own declared parameter type. If a loader
+declares `{ month: string; region: string }` and the page supplies neither, that is a
+`NOVA3001` at the spec line that named the loader — not a generated call that fails at
+runtime. Where a route param and a filter share a name, the route param wins.
+
+Generated code is safe under `noUncheckedIndexedAccess`. Filter values are keyed by
+the filter names the page declares rather than by an open index signature, and each
+route param a page reads is narrowed into a local once at the top of the page function.
+
 Components are resolved by name against the modules listed in `components`. A
 bare capitalised name must be exported by one of them; a name that isn't
 resolves to a build error listing what is available. Anything a spec can't
@@ -148,12 +160,6 @@ its `XxxInput`/`Xxx` types are derived from the very loader/action they are
 assigned back to, so it cannot catch a spec/code type mismatch (`pages.tsx`
 already does); it catches loader arity and a loader that isn't declared
 `async`, which `pages.tsx`'s JSX has no occasion to exercise.
-
-**Route params are not yet passed to loaders.** A loader's query object is built
-from the page's filters only (`{ [filterName]: filters[filterName], ... }`);
-route params bound with `params.id` reach a component's props but are not
-merged into the object a loader receives. A loader that needs a route param
-today has to read it some other way.
 
 **`confirm:` is not implemented.** The spec format and `useAction`'s runtime
 support a confirmation prompt before a destructive action (`opts.confirm`,
