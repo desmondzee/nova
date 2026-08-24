@@ -1,3 +1,4 @@
+import { relative, sep } from "node:path";
 import type { NovaConfig } from "../config.js";
 import type { ResolvedApp } from "../resolve.js";
 import { Emitter, type LineMap } from "./emitter.js";
@@ -16,10 +17,18 @@ export const rel = (config: NovaConfig, path: string) => `${path}${config.import
  * name relative to the app root in the common case ("generated" → "../data"), but it may
  * be nested arbitrarily deep (e.g. "src/generated" → "../../data"), so the number of
  * "../" segments must track outDir's own depth rather than assume exactly one.
+ *
+ * Computed with `node:path.relative` — the same primitive `resolve.ts`'s
+ * `specifierFromOutDir` uses for catalog/local-component specifiers — rather than by
+ * hand-splitting `outDir` on "/". A hand-rolled split previously miscounted "."
+ * segments (so `outDir: "./generated"`, an entirely ordinary value equivalent to
+ * "generated", produced an extra "../"); `path.relative` normalises that away for
+ * free, and keeps this computation from silently diverging from
+ * `specifierFromOutDir`'s again.
  */
 export function appRel(config: NovaConfig, name: string): string {
-  const depth = Math.max(1, config.outDir.split(/[\\/]+/).filter(Boolean).length);
-  return rel(config, "../".repeat(depth) + name);
+  const up = relative(config.outDir, ".").split(sep).join("/") || ".";
+  return rel(config, `${up}/${name}`);
 }
 
 export function emitTypes(app: ResolvedApp, config: NovaConfig): EmittedFile {

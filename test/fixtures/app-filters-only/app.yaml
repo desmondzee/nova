@@ -1,0 +1,6 @@
+pages:
+  "/":
+    filters:
+      month: { type: month, default: current }
+    sections:
+      - StatCard: { label: Month, value: overview }

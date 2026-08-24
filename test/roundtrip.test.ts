@@ -91,6 +91,24 @@ describe("round trip", () => {
     expect(result.ok).toBe(true);
   });
 
+  it("compiles clean under noUnusedLocals for a page with filters and no loader", async () => {
+    // app-basic (above) has both filters and a loader on the same page, so it can't
+    // catch a `const filters = useFilters(...)` that nothing reads: filters only feed a
+    // loader's query object today, so a page with filters but no loader must not
+    // declare the local at all, or this fails the exact same way item 1 did.
+    const appDir = app("app-filters-only");
+    const config: NovaConfig = {
+      ...configFor(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    };
+    const result = await compileApp(appDir, config);
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).not.toContain("useFilters");
+    expect(pages).not.toContain("const filters");
+  });
+
   it("resolves app-root imports correctly under a nested outDir", async () => {
     // specifierFromOutDir (resolve.ts) already recomputes catalog/local-component
     // specifiers relative to outDir. The hand-written "../data"/"../actions"/"../compute"

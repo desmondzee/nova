@@ -61,6 +61,22 @@ describe("emitTypes", () => {
     const { text } = emitTypes(resolved(), { ...config, outDir: "src/generated" });
     expect(text).toContain('import type * as data from "../../data";');
   });
+
+  it("treats a leading './' in outDir as the same single level as no prefix", () => {
+    // Regression: a hand-split appRel (`outDir.split(/[\\/]+/).filter(Boolean)`) counts
+    // "." as its own path segment, so "./generated" — an entirely ordinary way to spell
+    // "generated" — produced "../../data" instead of "../data". specifierFromOutDir
+    // (resolve.ts), which goes through node:path's join/relative, already got this
+    // right; appRel must agree with it rather than silently diverging again.
+    const { text } = emitTypes(resolved(), { ...config, outDir: "./generated" });
+    expect(text).toContain('import type * as data from "../data";');
+    expect(text).not.toContain('"../../data"');
+  });
+
+  it("treats a trailing slash in outDir as the same single level as no suffix", () => {
+    const { text } = emitTypes(resolved(), { ...config, outDir: "generated/" });
+    expect(text).toContain('import type * as data from "../data";');
+  });
 });
 
 describe("emitRuntime", () => {

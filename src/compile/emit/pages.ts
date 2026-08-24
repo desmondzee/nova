@@ -1,4 +1,4 @@
-import type { PropValue, SectionSpec } from "../../schema/types.js";
+import type { PageSpec, PropValue, SectionSpec } from "../../schema/types.js";
 import type { NovaConfig } from "../config.js";
 import type { ResolvedApp } from "../resolve.js";
 import { Emitter, type SpecPath } from "./emitter.js";
@@ -43,8 +43,10 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
   // Each hook is imported only when some page actually needs it. A host with
   // `noUnusedLocals` fails the build on an unconditional import that a given spec
   // never calls — a spec with no filters (useFilters), no bound action (useAction), or
-  // no data binding at all (useLoader) is entirely ordinary, not a spec bug.
-  const usesFilters = app.spec.pages.some((p) => p.filters.length > 0);
+  // no data binding at all (useLoader) is entirely ordinary, not a spec bug. A page can
+  // *declare* filters without anything reading them yet (see pageNeedsFilters below), so
+  // "has filters" alone is not sufficient here either.
+  const usesFilters = app.spec.pages.some(pageNeedsFilters);
   const usesActions = app.actions.length > 0;
   const usesLoaders = app.loaders.length > 0;
   const hooks = [
@@ -66,7 +68,7 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.line(`function Page_${index}({ params }: { params: Record<string, string> }) {`, path);
     e.indent();
     e.line("void params;");
-    if (page.filters.length > 0) {
+    if (pageNeedsFilters(page)) {
       const defaults = page.filters
         .map((f) => `${JSON.stringify(f.name)}: ${JSON.stringify(String(f.default ?? ""))}`)
         .join(", ");
@@ -133,6 +135,17 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
   }
 }
 
+// A page's `filters` local is only worth declaring when something in that page's
+// function body will actually read it: at least one loader (filters feed the loader's
+// query object), or a component prop bound directly to `filters.xxx` (a filter value
+// can be rendered or otherwise consumed with no loader involved at all — TabNav's
+// `active` state driven straight from a filter, for example). "the page declares
+// filters" alone is not enough — under `noUnusedLocals`, a page with filters that
+// nothing reads (yet) must not declare the local.
+function pageNeedsFilters(page: PageSpec): boolean {
+  return page.filters.length > 0 && (usedLoaders(page.sections).length > 0 || collect(page.sections, "filter").length > 0);
+}
+
 function usedLoaders(sections: SectionSpec[]): string[] {
   return collect(sections, "data");
 }
@@ -141,7 +154,7 @@ function usedActionNames(sections: SectionSpec[]): string[] {
   return collect(sections, "actions");
 }
 
-function collect(sections: SectionSpec[], kind: "data" | "actions"): string[] {
+function collect(sections: SectionSpec[], kind: "data" | "actions" | "filter"): string[] {
   const found = new Set<string>();
   const walk = (list: SectionSpec[]) => {
     for (const s of list) {

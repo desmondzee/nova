@@ -166,6 +166,28 @@ describe("resolveApp", () => {
     }
   });
 
+  it("reports a configured state component that no catalog exports, and fails resolution", () => {
+    // Decoupling "validate all three states" from "only import the ones actually
+    // rendered" (see the components test above) must not turn validation into a no-op:
+    // a bad `states` config still has to fail loudly, even for a state (`empty`) that
+    // no generated page currently renders.
+    const badConfig: NovaConfig = { ...config, states: { ...config.states, empty: "NoSuchState" } };
+    const { raw, positions } = loadSpecFile(SPEC_FILE, readFileSync(SPEC_FILE, "utf8"));
+    const { spec } = validate(raw, positions);
+    const { catalog } = readCatalogs(badConfig, SPEC_FILE);
+    const { resolved, diagnostics } = resolveApp(spec!, {
+      config: badConfig,
+      appDir: APP_DIR,
+      specFile: SPEC_FILE,
+      catalog,
+      positions,
+    });
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]!.code).toBe("NOVA2001");
+    expect(diagnostics[0]!.message).toContain("NoSuchState");
+    expect(resolved).toBeNull();
+  });
+
   it("prefers .ts exports over .tsx exports for the same base name", () => {
     const specFile = here("./fixtures/app-tiebreak/app.yaml");
     const appDir = dirname(specFile);
