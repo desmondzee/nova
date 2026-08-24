@@ -1,14 +1,13 @@
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { readCatalogs } from "../src/compile/catalog.js";
 import type { NovaConfig } from "../src/compile/config.js";
 import { emitContract, emitHandlers, emitPages, emitRuntime, emitTypes } from "../src/compile/emit/index.js";
-import { loadSpecFile } from "../src/compile/load.js";
-import { createProgram } from "../src/compile/program.js";
+import { loadSpecFile, type PositionMap } from "../src/compile/load.js";
 import { resolveApp } from "../src/compile/resolve.js";
+import { typecheckEmitted } from "../src/compile/typecheck.js";
 import { validate } from "../src/schema/validate.js";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -34,6 +33,11 @@ function resolved() {
     catalog,
     positions,
   }).resolved!;
+}
+
+function specPositions(): PositionMap {
+  const source = readFileSync(SPEC_FILE, "utf8");
+  return loadSpecFile(SPEC_FILE, source).positions;
 }
 
 describe("emitTypes", () => {
@@ -109,19 +113,6 @@ describe("emitContract", () => {
   });
 });
 
-function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-  return diagnostics
-    .map((d) => {
-      const message = ts.flattenDiagnosticMessageText(d.messageText, "\n");
-      if (d.file && d.start !== undefined) {
-        const { line, character } = d.file.getLineAndCharacterOfPosition(d.start);
-        return `${d.file.fileName}:${line + 1}:${character + 1} - ${message}`;
-      }
-      return message;
-    })
-    .join("\n");
-}
-
 describe("typechecks emitted output", () => {
   it("produces no semantic diagnostics for the fixture app", () => {
     const app = resolved();
@@ -155,12 +146,13 @@ describe("typechecks emitted output", () => {
         JSON.stringify({ compilerOptions: baseTsconfig.compilerOptions, include: [] }),
       );
 
-      const roots = files.map((file) => join(generatedDir, file.name));
-      const handle = createProgram({ tsconfigPath: tmpTsconfigPath, roots });
-      expect(handle).not.toBeNull();
-
-      const diagnostics = handle!.program.getSemanticDiagnostics();
-      expect(diagnostics, formatDiagnostics(diagnostics)).toHaveLength(0);
+      const diagnostics = typecheckEmitted({
+        files,
+        outDir: generatedDir,
+        tsconfigPath: tmpTsconfigPath,
+        positions: specPositions(),
+      });
+      expect(diagnostics, JSON.stringify(diagnostics, null, 2)).toEqual([]);
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
