@@ -12,7 +12,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "prepublishOnly": "pnpm test && pnpm typecheck && pnpm build"
   },
   "dependencies": { "yaml": "^2.9.0" },
   "peerDependencies": { "typescript": ">=5.5" },
