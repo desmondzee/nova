@@ -1,6 +1,11 @@
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { createProgram, moduleExports, resolveModule } from "../src/compile/program.js";
+import {
+  createProgram,
+  createSession,
+  moduleExports,
+  resolveModule,
+} from "../src/compile/program.js";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const TSCONFIG = here("./fixtures/tsconfig.json");
@@ -16,6 +21,33 @@ describe("createProgram", () => {
 
   it("returns null when the tsconfig does not exist", () => {
     expect(createProgram({ tsconfigPath: here("./nope.json"), roots: [] })).toBeNull();
+  });
+
+  // The tsconfig here matches every .ts/.tsx under test/fixtures. Unioning that whole
+  // set into the roots — which is what this used to do — is what made a host build
+  // re-parse its entire repository once per call, three or four times per app.
+  it("pulls in the roots and what they import, not the whole tsconfig include set", () => {
+    const p = createProgram({ tsconfigPath: TSCONFIG, roots: [DATA] })!;
+    expect(p.program.getSourceFile(DATA)).toBeDefined();
+    expect(p.program.getSourceFile(CATALOG)).toBeUndefined();
+  });
+
+  it("reuses a parsed source file across programs built from one session", () => {
+    const session = createSession();
+    const a = createProgram({ tsconfigPath: TSCONFIG, roots: [CATALOG], session })!;
+    const b = createProgram({ tsconfigPath: TSCONFIG, roots: [DATA], session })!;
+    const shared = a.program.getSourceFiles().find((f) => f.fileName.endsWith("lib.es2022.d.ts"));
+    expect(shared).toBeDefined();
+    // Same object, not an equal one: the second program did not re-read or re-parse it.
+    expect(b.program.getSourceFile(shared!.fileName)).toBe(shared);
+    expect(session.programs).toBe(2);
+  });
+
+  it("counts every program it builds, so a caller can pin the number", () => {
+    const session = createSession();
+    createProgram({ tsconfigPath: TSCONFIG, roots: [CATALOG], session });
+    createProgram({ tsconfigPath: here("./nope.json"), roots: [], session });
+    expect(session.programs).toBe(1);
   });
 });
 

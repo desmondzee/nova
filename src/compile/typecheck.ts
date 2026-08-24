@@ -3,7 +3,7 @@ import ts from "typescript";
 import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
 import type { EmittedFile } from "./emit/types.js";
 import type { PositionMap } from "./load.js";
-import { createProgram } from "./program.js";
+import { createProgram, type ProgramSession } from "./program.js";
 
 /**
  * Runs TypeScript over the emitted output and remaps anything it reports back to the
@@ -38,18 +38,32 @@ export function typecheckEmitted(opts: {
   outDir: string;
   tsconfigPath: string;
   positions: PositionMap;
+  session?: ProgramSession;
 }): Diagnostic[] {
   const paths = opts.files.map((f) => join(opts.outDir, f.name));
-  const handle = createProgram({ tsconfigPath: opts.tsconfigPath, roots: paths });
+  const handle = createProgram({
+    tsconfigPath: opts.tsconfigPath,
+    roots: paths,
+    session: opts.session,
+  });
   if (!handle) return [];
 
   const mapByPath = new Map(opts.files.map((f, i) => [paths[i]!, f.map]));
   const out: Diagnostic[] = [];
 
-  const diagnostics = [
-    ...handle.program.getSyntacticDiagnostics(),
-    ...handle.program.getSemanticDiagnostics(),
-  ];
+  // Asked per emitted file rather than for the whole program. Everything a whole-program
+  // request adds is a diagnostic on a file `mapByPath` does not know — the author's own
+  // `data.ts`, a catalog component, a global option error — and the loop below drops
+  // every one of those anyway. Same files asked, same answers, without checking a
+  // repository's worth of code that is never reported on.
+  const diagnostics = handle.program.getSourceFiles().flatMap((file) =>
+    mapByPath.has(file.fileName)
+      ? [
+          ...handle.program.getSyntacticDiagnostics(file),
+          ...handle.program.getSemanticDiagnostics(file),
+        ]
+      : [],
+  );
 
   for (const d of diagnostics) {
     if (!d.file || d.start === undefined) continue;

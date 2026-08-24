@@ -34,6 +34,24 @@ describe("typecheckEmitted", () => {
     expect(typecheckEmitted({ files: [f], outDir: dir, tsconfigPath: TSCONFIG, positions })).toEqual([]);
   });
 
+  // Nothing imports test/fixtures/ambient.d.ts; it is in the program only because
+  // every `.d.ts` the tsconfig's `include` matches is kept as a root. Drop that and a
+  // host whose globals, JSX types or module augmentations live in a `.d.ts` starts
+  // getting phantom errors in emitted output.
+  it("sees a global from an ambient .d.ts under the tsconfig include", () => {
+    const f = file("ambient-ok.ts", ["export const s: string = NOVA_AMBIENT_GLOBAL;"], {});
+    const dir = scratch([f]);
+    expect(typecheckEmitted({ files: [f], outDir: dir, tsconfigPath: TSCONFIG, positions })).toEqual([]);
+  });
+
+  it("still reports a global that no ambient file declares", () => {
+    const f = file("ambient-bad.ts", ["export const s: string = NOVA_NOT_DECLARED;"], {});
+    const dir = scratch([f]);
+    const out = typecheckEmitted({ files: [f], outDir: dir, tsconfigPath: TSCONFIG, positions });
+    expect(out.map((d) => d.code)).toEqual(["NOVA3002"]);
+    expect(out[0]!.message).toContain("NOVA_NOT_DECLARED");
+  });
+
   it("remaps a type error to the spec position that produced the line", () => {
     const f = file("bad.ts", ["export const n: number = 1;", 'export const s: string = 2;'], {
       2: ["pages", "/", "sections", 0],

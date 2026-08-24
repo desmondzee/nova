@@ -63,6 +63,30 @@ whatever form your build already uses. `components`, `states`, `outDir` and
 `tsconfigPath` are all required; `importExtension` is optional and defaults to
 bundler-style resolution (no extension appended to relative imports).
 
+### Compiling more than one app
+
+Every app's compile builds a few `ts.Program`s, and most of what they parse —
+the lib files, `@types/*`, your component catalog — is the same for all of them.
+Pass one session to every call and that work happens once:
+
+```ts
+import { compileApp, createSession } from "@light/nova/compile";
+
+const session = createSession();
+for (const app of apps) {
+  const result = await compileApp(app, config, { session });
+  // ...
+}
+```
+
+Results are identical either way; a session only removes repeated work. On a
+38-app repo with a repository-wide tsconfig `include`, sharing one took the
+build from 65s to 3.3s and peak memory from 2.3GB to 0.7GB. Every cached entry
+is revalidated against the file's modification time and size, so a session is
+safe to hold across rebuilds in a watch loop. The one thing it will not notice
+is a *new* file appearing under the tsconfig's `include` while the tsconfig
+itself is unchanged — call `createSession()` again if that can happen.
+
 ## What an app looks like
 
 ```
@@ -234,6 +258,15 @@ before name resolution ever sees it — referencing it by name produces the
 same "unknown component" error as a typo, even though it is exported. Function
 components and `forwardRef` components both have call signatures and work as
 expected.
+
+**Ambient declarations must live in a `.d.ts`.** Nova's programs are built
+from the files it needs plus whatever those import — TypeScript follows the
+imports itself — so a tsconfig's `include` set is not dragged in wholesale.
+The exception is ambient declaration files, which nothing imports and which
+therefore have to be roots: every `.d.ts` matched by `include` is added to
+every program, so globals, JSX namespace types and module augmentations work
+as they do under your own `tsc`. Ambient declarations written in a plain
+non-module `.ts` file rather than a `.d.ts` are not picked up.
 
 **`write: false` performs no typecheck.** Passing `write: false` to
 `compileApp` still runs the full pipeline in memory and returns the files

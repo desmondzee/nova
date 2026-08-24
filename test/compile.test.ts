@@ -2,7 +2,7 @@ import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { compileApp } from "../src/compile/index.js";
+import { compileApp, createSession } from "../src/compile/index.js";
 import type { NovaConfig } from "../src/compile/config.js";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
@@ -97,5 +97,55 @@ describe("compileApp", () => {
     const result = await compileApp(appDir, configFor(appDir));
     expect(result.ok).toBe(false);
     expect(result.diagnostics[0]!.code).toBe("NOVA1006");
+  });
+});
+
+// A `ts.Program` is by far the most expensive thing nova builds, and a host runs
+// compileApp once per app on every dev-server rebuild. These pin the count so that
+// re-adding a program — or quietly dropping the session on its way down to
+// catalog/resolve/typecheck, which would make every stage build its own again — fails
+// here rather than showing up as a minute-long build on a real repo.
+describe("compileApp shares TypeScript work through a session", () => {
+  it("builds exactly three programs for one app: catalog, exports, typecheck", async () => {
+    const appDir = fixtureCopy();
+    const session = createSession();
+    const result = await compileApp(appDir, configFor(appDir), { session });
+    expect(result.diagnostics).toEqual([]);
+    expect(session.programs).toBe(3);
+  });
+
+  it("builds no extra programs for a second app on the same session", async () => {
+    const first = fixtureCopy();
+    const second = fixtureCopy();
+    const session = createSession();
+    await compileApp(first, configFor(first), { session });
+    await compileApp(second, configFor(second), { session });
+    expect(session.programs).toBe(6);
+  });
+
+  it("produces byte-identical output and identical diagnostics with and without one", async () => {
+    const appDir = fixtureCopy();
+    const other = fixtureCopy();
+    const session = createSession();
+    // Another app through the session first, so this one reads a warm cache.
+    await compileApp(other, configFor(other), { session });
+    const a = await compileApp(appDir, configFor(appDir), { session });
+    const b = await compileApp(appDir, configFor(appDir));
+    expect(a.diagnostics).toEqual(b.diagnostics);
+    expect(a.files.map((f) => f.text)).toEqual(b.files.map((f) => f.text));
+  });
+
+  it("sees an edit made between two calls on the same session", async () => {
+    const appDir = fixtureCopy();
+    const session = createSession();
+    const before = await compileApp(appDir, configFor(appDir), { session });
+    expect(before.diagnostics).toEqual([]);
+    // The cached parse of data.ts must not survive a change to it.
+    const { readFileSync: read, writeFileSync } = await import("node:fs");
+    const data = join(appDir, "data.ts");
+    writeFileSync(data, read(data, "utf8").replace(/export async function trips/, "export async function tripz"));
+    const after = await compileApp(appDir, configFor(appDir), { session });
+    expect(after.ok).toBe(false);
+    expect(after.diagnostics.map((d) => d.code)).toEqual(["NOVA2002"]);
   });
 });

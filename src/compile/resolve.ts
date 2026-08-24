@@ -4,7 +4,13 @@ import { componentKey, type AppSpec, type PageSpec, type PropValue, type Section
 import { isComponentName, type Catalog } from "./catalog.js";
 import type { NovaConfig } from "./config.js";
 import type { PositionMap } from "./load.js";
-import { createProgram, moduleExports, resolveModule, type ExportInfo } from "./program.js";
+import {
+  createProgram,
+  moduleExports,
+  resolveModule,
+  type ExportInfo,
+  type ProgramSession,
+} from "./program.js";
 
 export type { SpecPath };
 
@@ -48,6 +54,7 @@ type Ctx = {
   specFile: string;
   catalog: Catalog;
   positions: PositionMap;
+  session?: ProgramSession;
 };
 
 const sorted = (s: Set<string>) => [...s].sort();
@@ -68,11 +75,15 @@ const EXPORT_EXTS = [".ts", ".tsx"] as const;
  * build every candidate path up front and create a single program that covers
  * all of them, then read each base's exports from that same program.
  */
-function exportsOf(appDir: string, tsconfigPath: string): Map<string, Map<string, ExportInfo>> {
+function exportsOf(
+  appDir: string,
+  tsconfigPath: string,
+  session: ProgramSession | undefined,
+): Map<string, Map<string, ExportInfo>> {
   const roots = EXPORT_BASES.flatMap((base) =>
     EXPORT_EXTS.map((ext) => join(appDir, base + ext)),
   );
-  const handle = createProgram({ tsconfigPath, roots });
+  const handle = createProgram({ tsconfigPath, roots, session });
 
   const result = new Map<string, Map<string, ExportInfo>>();
   for (const base of EXPORT_BASES) {
@@ -107,7 +118,7 @@ export function resolveApp(
   const actionOrigins: Record<string, SpecPath> = {};
   const computeOrigins: Record<string, SpecPath> = {};
 
-  const exportsByBase = exportsOf(ctx.appDir, ctx.config.tsconfigPath);
+  const exportsByBase = exportsOf(ctx.appDir, ctx.config.tsconfigPath, ctx.session);
   const dataExports = exportsByBase.get("data") ?? new Map<string, ExportInfo>();
   const actionExports = exportsByBase.get("actions") ?? new Map<string, ExportInfo>();
   const computeExports = exportsByBase.get("compute") ?? new Map<string, ExportInfo>();
@@ -120,11 +131,20 @@ export function resolveApp(
 
   const localModuleFiles = new Map<string, string | null>();
   for (const specifier of localModuleSpecifiers) {
-    localModuleFiles.set(specifier, resolveModule(specifier, ctx.specFile, ctx.config.tsconfigPath));
+    localModuleFiles.set(
+      specifier,
+      resolveModule(specifier, ctx.specFile, ctx.config.tsconfigPath, ctx.session),
+    );
   }
   const localRoots = [...localModuleFiles.values()].filter((f): f is string => f !== null);
   const localHandle =
-    localRoots.length > 0 ? createProgram({ tsconfigPath: ctx.config.tsconfigPath, roots: localRoots }) : null;
+    localRoots.length > 0
+      ? createProgram({
+          tsconfigPath: ctx.config.tsconfigPath,
+          roots: localRoots,
+          session: ctx.session,
+        })
+      : null;
 
   // catalog.ts and the local-component resolution above both resolve a component's
   // module specifier relative to the spec file (ctx.appDir). But emitPages copies

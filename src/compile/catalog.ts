@@ -1,6 +1,6 @@
 import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
 import type { NovaConfig } from "./config.js";
-import { createProgram, moduleExports, resolveModule } from "./program.js";
+import { createProgram, moduleExports, resolveModule, type ProgramSession } from "./program.js";
 
 export type CatalogEntry = { name: string; module: string; file: string };
 
@@ -19,13 +19,14 @@ export const isComponentName = (name: string) => /^[A-Z]/.test(name);
 export function readCatalogs(
   config: NovaConfig,
   containingFile: string,
+  session?: ProgramSession,
 ): { catalog: Catalog; diagnostics: Diagnostic[] } {
   const diagnostics: Diagnostic[] = [];
   const at = { file: containingFile, line: 1, col: 1 };
 
   const resolved: { module: string; file: string }[] = [];
   for (const specifier of config.components) {
-    const file = resolveModule(specifier, containingFile, config.tsconfigPath);
+    const file = resolveModule(specifier, containingFile, config.tsconfigPath, session);
     if (file === null) {
       diagnostics.push(
         diagnostic("NOVA2000", `cannot resolve catalog module '${specifier}'`, at, {
@@ -41,6 +42,7 @@ export function readCatalogs(
   const handle = createProgram({
     tsconfigPath: config.tsconfigPath,
     roots: resolved.map((r) => r.file),
+    session,
   });
   if (handle) {
     for (const { module, file } of resolved) {

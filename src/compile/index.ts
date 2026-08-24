@@ -14,6 +14,7 @@ import {
   type EmittedFile,
 } from "./emit/index.js";
 import { loadSpecFile } from "./load.js";
+import type { ProgramSession } from "./program.js";
 import { resolveApp } from "./resolve.js";
 import { typecheckEmitted } from "./typecheck.js";
 
@@ -21,6 +22,7 @@ export type { NovaConfig } from "./config.js";
 export { loadSpecFile, parseSpec } from "./load.js";
 export type { AppSpec } from "../schema/types.js";
 export type { EmittedFile, LineMap } from "./emit/index.js";
+export { createSession, type ProgramSession } from "./program.js";
 // Every type reachable through a `./compile` signature is nameable from `./compile`:
 // `EmittedFile.map` is a `LineMap`, which is `Map<number, SpecPath>`; `Diagnostic`
 // carries a `Severity` and an optional `Related[]`, and `Related` extends `Position`.
@@ -80,11 +82,17 @@ const fail = (diagnostics: Diagnostic[]): CompileResult => ({
  * Consequently, `result.ok === true` under `write: false` means only "the spec resolved
  * and emitted successfully" — it does NOT mean the emitted output type-checks. Only a
  * `write: true` run (the default) verifies that.
+ *
+ * @param opts.session - Optional. TypeScript work to share with other `compileApp`
+ * calls: parsed tsconfigs, and parsed source files (the lib files, `@types/*` and the
+ * host component catalog are the same for every app). Without one, each call parses all
+ * of that again from scratch. A build script compiling many apps should create one with
+ * `createSession()` and pass it to every call; results are identical either way.
  */
 export async function compileApp(
   appDir: string,
   config: NovaConfig,
-  opts: { write?: boolean } = {},
+  opts: { write?: boolean; session?: ProgramSession } = {},
 ): Promise<CompileResult> {
   const write = opts.write ?? true;
   const specFile = join(appDir, "app.yaml");
@@ -103,7 +111,7 @@ export async function compileApp(
   const { spec, diagnostics: validateDiags } = validate(raw, positions);
   if (!spec) return fail(validateDiags);
 
-  const { catalog, diagnostics: catalogDiags } = readCatalogs(config, specFile);
+  const { catalog, diagnostics: catalogDiags } = readCatalogs(config, specFile, opts.session);
   if (catalogDiags.some(isError)) return fail([...validateDiags, ...catalogDiags]);
 
   const { resolved, diagnostics: resolveDiags } = resolveApp(spec, {
@@ -112,6 +120,7 @@ export async function compileApp(
     specFile,
     catalog,
     positions,
+    session: opts.session,
   });
   if (!resolved) return fail([...validateDiags, ...resolveDiags]);
 
@@ -157,7 +166,13 @@ export async function compileApp(
 
   // Skipped under write: false — nothing was written to disk for TypeScript to check.
   const typeDiags = write
-    ? typecheckEmitted({ files, outDir, tsconfigPath: config.tsconfigPath, positions })
+    ? typecheckEmitted({
+        files,
+        outDir,
+        tsconfigPath: config.tsconfigPath,
+        positions,
+        session: opts.session,
+      })
     : [];
 
   const diagnostics = [...validateDiags, ...resolveDiags, ...typeDiags];
