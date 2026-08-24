@@ -11,8 +11,12 @@ import {
 
 const PAGE_KEYS = ["title", "filters", "sections"];
 const FILTER_KEYS = ["type", "default"];
-const ROUTE = /^\/(?:[A-Za-z0-9\-_]+|:[A-Za-z_$][A-Za-z0-9_$]*)?(?:\/(?:[A-Za-z0-9\-_]+|:[A-Za-z_$][A-Za-z0-9_$]*))*$/;
+const ROUTE = /^\/$|^(?:\/(?:[A-Za-z0-9\-_]+|:[A-Za-z_$][A-Za-z0-9_$]*))+$/;
 
+// Iteration order below is intentionally inconsistent: loops that build the emitted AppSpec
+// (rawPages, filters, props) are sorted so downstream emission is byte-deterministic, while
+// loops that only check for unknown keys follow document order so diagnostics read top-to-bottom
+// in the order the author sees them in the source file.
 type Path = (string | number)[];
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>

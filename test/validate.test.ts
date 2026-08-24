@@ -69,6 +69,16 @@ describe("validate", () => {
     expect(diagnostics.map((d) => d.code)).toContain("NOVA1005");
   });
 
+  it("reports an invalid route for a leading double slash", () => {
+    const { diagnostics } = check('pages:\n  "//a":\n    sections: []\n');
+    expect(diagnostics.map((d) => d.code)).toContain("NOVA1005");
+  });
+
+  it("reports an invalid route for a leading double slash with a param", () => {
+    const { diagnostics } = check('pages:\n  "//:id":\n    sections: []\n');
+    expect(diagnostics.map((d) => d.code)).toContain("NOVA1005");
+  });
+
   it("collects every problem rather than stopping at the first", () => {
     const { diagnostics } = check(
       'pages:\n  "/":\n    titel: a\n    sections: "nope"\n  bad:\n    sections: []\n',
