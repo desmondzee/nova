@@ -11,6 +11,7 @@ import {
   emitPages,
   emitRuntime,
   emitTypes,
+  emitViews,
   type EmittedFile,
 } from "./emit/index.js";
 import { loadSpecFile } from "./load.js";
@@ -146,6 +147,7 @@ export async function compileApp(
   const files = [
     emitTypes(resolved, config),
     emitRuntime(resolved, config),
+    emitViews(resolved, config),
     emitPages(resolved, config),
     emitHandlers(resolved, config),
     emitContract(resolved, config),

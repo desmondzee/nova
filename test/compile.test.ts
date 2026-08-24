@@ -41,7 +41,7 @@ const configFor = (appDir: string): NovaConfig => ({
 });
 
 describe("compileApp", () => {
-  it("compiles the fixture app and writes five files", async () => {
+  it("compiles the fixture app and writes six files", async () => {
     const appDir = fixtureCopy();
     const result = await compileApp(appDir, configFor(appDir));
     expect(result.diagnostics).toEqual([]);
@@ -52,8 +52,12 @@ describe("compileApp", () => {
       "pages.tsx",
       "runtime.tsx",
       "types.ts",
+      "views.tsx",
     ]);
-    expect(readFileSync(join(appDir, "generated", "pages.tsx"), "utf8")).toContain("<Table");
+    // Six, not five: the route map and the page components are two modules, because a
+    // server component cannot read a map exported from a "use client" one.
+    expect(readFileSync(join(appDir, "generated", "views.tsx"), "utf8")).toContain("<Table");
+    expect(readFileSync(join(appDir, "generated", "pages.tsx"), "utf8")).toContain('"/": Page_0,');
   });
 
   it("is byte-deterministic across runs", async () => {
@@ -67,7 +71,7 @@ describe("compileApp", () => {
     const appDir = fixtureCopy();
     const result = await compileApp(appDir, configFor(appDir), { write: false });
     expect(result.written).toEqual([]);
-    expect(result.files.length).toBe(5);
+    expect(result.files.length).toBe(6);
     expect(() => readFileSync(join(appDir, "generated", "pages.tsx"), "utf8")).toThrow();
   });
 

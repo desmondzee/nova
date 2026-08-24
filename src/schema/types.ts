@@ -62,6 +62,15 @@ export type SectionSpec = {
    * that renders a delete button has no reason to declare a `confirm` prop of its own.
    */
   confirm?: string;
+  /**
+   * `refreshes: [trips]` — the page's loaders to re-read once the one action this section
+   * runs has succeeded. Consumed by nova (it becomes the `refresh` callback on
+   * `useAction`/`useForm`, which calls `reload()` on each named loader) rather than
+   * forwarded, exactly as `confirm:` is. Deliberately the whole vocabulary: naming the
+   * loaders is a page-local fact the spec already knows, and anything more would be a
+   * cache.
+   */
+  refreshes?: string[];
 };
 
 /**

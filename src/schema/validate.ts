@@ -6,6 +6,7 @@ import {
   type SpecPath,
 } from "./diagnostic.js";
 import {
+  componentKey,
   parseBinding,
   parseComponentRef,
   type AppSpec,
@@ -209,20 +210,50 @@ export function validate(
     placed: { path: Path; section: SectionSpec }[],
     report: typeof err,
   ): void {
-    const seen = new Map<string, string | undefined>();
+    // Everything nova attaches to that one hoisted useAction, as one comparable value.
+    const attached = (s: SectionSpec) => JSON.stringify([s.confirm ?? null, s.refreshes ?? null]);
+    const seen = new Map<string, string>();
     const reported = new Set<string>();
     for (const { path, section } of placed) {
       for (const name of propActionsOf(section)) {
         if (!seen.has(name)) {
-          seen.set(name, section.confirm);
+          seen.set(name, attached(section));
           continue;
         }
-        if (seen.get(name) === section.confirm || reported.has(name)) continue;
+        if (seen.get(name) === attached(section) || reported.has(name)) continue;
         reported.add(name);
         report(
           "NOVA1010",
-          `action '${name}' is bound with two different confirmations on page '${route}' — one useAction is hoisted per action, so only one can be honoured`,
+          `action '${name}' is bound with two different confirmations or refreshes on page '${route}' — one useAction is hoisted per action, so only one can be honoured`,
           path,
+        );
+      }
+    }
+
+    // `refreshes:` names loaders, and the only loaders a generated page holds are the
+    // ones its own sections bind. A name that is not one of them would emit
+    // `tirps.reload()` against a local that was never declared — a nova bug wearing a
+    // spec error's clothes — so it is reported here, at the line that named it.
+    const loaded = new Set<string>();
+    for (const { section } of placed) {
+      const props = [
+        ...Object.values(section.props),
+        ...(section.fields ?? []).flatMap((f) => Object.values(f.props)),
+      ];
+      for (const value of props) {
+        if (value.kind === "binding" && value.ref.kind === "data") loaded.add(value.ref.name);
+      }
+    }
+    for (const { path, section } of placed) {
+      for (const name of section.refreshes ?? []) {
+        if (loaded.has(name)) continue;
+        report(
+          "NOVA1012",
+          `'${name}' is not a loader on page '${route}' — refreshes names loaders the page's own sections bind${
+            loaded.size === 0 ? "" : ` (${[...loaded].sort().join(", ")})`
+          }`,
+          [...path, componentKey(section.component), "refreshes"],
+          hintFor(name, [...loaded]),
         );
       }
     }
@@ -302,6 +333,7 @@ export function validate(
     let confirm: string | undefined;
     let submit: string | undefined;
     let rawFields: unknown;
+    let rawRefreshes: unknown;
     for (const prop of Object.keys(body).sort()) {
       if (prop === "submit") {
         const ref = typeof body.submit === "string" ? parseBinding(body.submit) : null;
@@ -318,6 +350,13 @@ export function validate(
       }
       if (prop === "fields") {
         rawFields = body.fields;
+        continue;
+      }
+      if (prop === "refreshes") {
+        // Consumed by nova, like `confirm:` and unlike `sortable:` — a form shell has no
+        // reason to declare a `refreshes` prop, so forwarding it would be a NOVA3001 on
+        // every form that used one.
+        rawRefreshes = body.refreshes;
         continue;
       }
       if (FORM_PROPS.includes(prop) && body.submit !== undefined) {
@@ -423,22 +462,36 @@ export function validate(
       }
     }
 
-    if (confirm !== undefined) {
-      // A confirmation guards an action, so there has to be exactly one to guard. Zero is
-      // a spec that reads as if it confirms something and does not; more than one is
-      // ambiguous, and nova will not pick.
-      const bound = actionsBoundBy(section);
-      if (bound.length === 1) {
-        section.confirm = confirm;
+    let refreshes: string[] | undefined;
+    if (rawRefreshes !== undefined) {
+      if (!Array.isArray(rawRefreshes) || rawRefreshes.some((n) => typeof n !== "string")) {
+        report("NOVA1003", "'refreshes' must be a list of loader names", [
+          ...path,
+          key,
+          "refreshes",
+        ]);
       } else {
-        report(
-          "NOVA1007",
-          bound.length === 0
-            ? `'confirm' needs an action to guard, and '${key}' binds no action`
-            : `'confirm' needs exactly one action to guard, and '${key}' binds ${bound.length} actions (${bound.join(", ")})`,
-          [...path, key, "confirm"],
-        );
+        refreshes = rawRefreshes as string[];
       }
+    }
+
+    // `confirm:` guards an action and `refreshes:` follows one, so each needs exactly one
+    // action to attach to. Zero is a spec that reads as if it does something and does
+    // not; more than one is ambiguous, and nova will not pick.
+    const bound = actionsBoundBy(section);
+    for (const word of ["confirm", "refreshes"] as const) {
+      if ((word === "confirm" ? confirm : refreshes) === undefined || bound.length === 1) continue;
+      report(
+        "NOVA1007",
+        bound.length === 0
+          ? `'${word}' needs an action to attach to, and '${key}' binds no action`
+          : `'${word}' needs exactly one action to attach to, and '${key}' binds ${bound.length} actions (${bound.join(", ")})`,
+        [...path, key, word],
+      );
+    }
+    if (bound.length === 1) {
+      if (confirm !== undefined) section.confirm = confirm;
+      if (refreshes !== undefined) section.refreshes = refreshes;
     }
     return place(section);
   }

@@ -223,19 +223,24 @@ export function resolveApp(
   }
 
   // A bad `states` config should fail loudly regardless of whether a given spec ends up
-  // rendering each state, so all three are validated against the catalog unconditionally.
-  // But only pull a state component into the emitted import list where a generated page
-  // actually renders it: loading/error appear only on a page that binds at least one
-  // loader (see emitPages), and the empty state isn't rendered by any generated page yet
-  // (see README limitations) — importing it unconditionally is exactly what produces an
-  // unused-import error on a host with `noUnusedLocals`.
+  // rendering each state, so every name given is validated against the catalog
+  // unconditionally. But only pull a state component into the emitted import list where a
+  // generated page actually renders it: loading/error appear only on a page that binds at
+  // least one loader (see emitViews), and no generated page renders an empty state at all
+  // — importing it unconditionally is exactly what produces an unused-import error on a
+  // host with `noUnusedLocals`. `states.empty` is optional for that reason; a host that
+  // names one still gets it checked, and nothing else.
   const stateNames = {
     loading: ctx.config.states.loading,
     error: ctx.config.states.error,
     empty: ctx.config.states.empty,
   };
   const stateEntries = new Map<keyof typeof stateNames, ReturnType<Catalog["get"]>>();
-  for (const [key, name] of Object.entries(stateNames) as [keyof typeof stateNames, string][]) {
+  for (const [key, name] of Object.entries(stateNames) as [
+    keyof typeof stateNames,
+    string | undefined,
+  ][]) {
+    if (name === undefined) continue;
     const entry = ctx.catalog.get(name);
     stateEntries.set(key, entry);
     if (!entry) {

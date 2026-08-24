@@ -1,0 +1,13 @@
+pages:
+  "/":
+    sections:
+      - Form:
+          submit: actions#saveTrip
+          refreshes: [trips]
+          fields:
+            - DateField: { name: date, label: Date }
+            - NumberField: { name: km, label: "Distance (km)", initial: 0 }
+            - TextField: { name: purpose, label: Purpose }
+      - Table:
+          rows: data#trips
+          columns: [date, km]

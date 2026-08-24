@@ -330,6 +330,45 @@ describe("validate", () => {
     expect(diagnostics[0]!.message).toContain("'onSort'");
   });
 
+  const REFRESH = [
+    "pages:",
+    '  "/":',
+    "    sections:",
+    "      - Form: { submit: actions#saveTrip, refreshes: [trips] }",
+    "      - Table: { rows: data#trips, columns: [date] }",
+    "",
+  ].join("\n");
+
+  it("records the loaders a section refreshes without forwarding them as a prop", () => {
+    const { spec, diagnostics } = check(REFRESH);
+    expect(diagnostics).toEqual([]);
+    const section = spec!.pages[0]!.sections[0]!;
+    expect(section.refreshes).toEqual(["trips"]);
+    // Consumed by nova, like `confirm:`: a form shell declares no `refreshes` prop, so
+    // forwarding it would be a NOVA3001 on every form that used one.
+    expect(section.props.refreshes).toBeUndefined();
+  });
+
+  it("reports a refreshes naming a loader the page does not bind", () => {
+    const { diagnostics } = check(REFRESH.replace("refreshes: [trips]", "refreshes: [tirps]"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1012"]);
+    expect(diagnostics[0]!.message).toContain("tirps");
+    expect(diagnostics[0]!.hint).toContain("trips");
+  });
+
+  it("reports a refreshes on a section that binds no action", () => {
+    const { diagnostics } = check(
+      REFRESH.replace("submit: actions#saveTrip, ", "").replace("- Form:", "- StatCard:"),
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1007"]);
+    expect(diagnostics[0]!.message).toContain("no action");
+  });
+
+  it("reports a refreshes that is not a list of loader names", () => {
+    const { diagnostics } = check(REFRESH.replace("refreshes: [trips]", "refreshes: trips"));
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1003"]);
+  });
+
   it("collects every problem rather than stopping at the first", () => {
     const { diagnostics } = check(
       'pages:\n  "/":\n    titel: a\n    sections: "nope"\n  bad:\n    sections: []\n',

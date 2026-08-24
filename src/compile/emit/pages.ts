@@ -15,6 +15,19 @@ const PAGES_TYPE =
 
 const TITLES_TYPE = "Record<string, string>";
 
+/**
+ * One endpoint's URL as the *client* calls it: `/_data/trips`, behind whatever prefix
+ * the host mounts this app's handler map at.
+ *
+ * `handlers.ts`'s keys deliberately do not move with it. They are relative to the mount
+ * — a host that serves an app at `/api/apps/<slug>/*` matches the remainder of the path
+ * against them — so prefixing both halves would double the prefix. Only the fetching
+ * half has to know where the app lives.
+ */
+function urlFor(config: NovaConfig, kind: "_data" | "_actions", name: string): string {
+  return `${(config.basePath ?? "").replace(/\/+$/, "")}/${kind}/${name}`;
+}
+
 /** Local holding one route param's value, narrowed to `string` exactly once per page. */
 const paramLocal = (name: string) => `params_${name}`;
 
@@ -53,22 +66,26 @@ function expr(value: PropValue): string {
   }
 }
 
+/** What nova consumes from a section rather than forwarding: the useAction/useForm opts. */
+type ActionOpts = { confirm?: string; refreshes?: string[] };
+
 /**
- * The confirmation message guarding each action bound on a page, if any.
+ * The confirmation and refresh list attached to each action bound on a page, if any.
  *
  * Keyed by action rather than by section because a page hoists one `useAction` per
  * action above every section that binds it; `validate` has already reported any page
- * where two sections disagree about the text (NOVA1010), so the last writer here is the
- * only writer.
+ * where two sections disagree (NOVA1010), so the last writer here is the only writer.
+ * A form's own `submit:` is deliberately not collected here — a form carries its options
+ * on its own `useForm`.
  */
-function confirmByAction(sections: SectionSpec[]): Map<string, string> {
-  const out = new Map<string, string>();
+function optionsByAction(sections: SectionSpec[]): Map<string, ActionOpts> {
+  const out = new Map<string, ActionOpts>();
   const walk = (list: SectionSpec[]) => {
     for (const s of list) {
-      if (s.confirm !== undefined) {
+      if (s.confirm !== undefined || s.refreshes !== undefined) {
         for (const value of Object.values(s.props)) {
           if (value.kind === "binding" && value.ref.kind === "actions") {
-            out.set(value.ref.name, s.confirm);
+            out.set(value.ref.name, optsOf(s));
           }
         }
       }
@@ -79,7 +96,88 @@ function confirmByAction(sections: SectionSpec[]): Map<string, string> {
   return out;
 }
 
+const optsOf = (s: SectionSpec): ActionOpts => ({
+  ...(s.confirm === undefined ? {} : { confirm: s.confirm }),
+  ...(s.refreshes === undefined ? {} : { refreshes: s.refreshes }),
+});
+
+/**
+ * The trailing options argument of a `useAction`/`useForm` call, or "" when the section
+ * asks for neither.
+ *
+ * `refresh` is the whole of the invalidation vocabulary: a successful submission calls
+ * `reload()` on each loader the section named, and the loader re-requests. There is no
+ * cache, no key space and nothing to configure — the page's own loader locals are
+ * already in scope above every action, because loaders are hoisted first.
+ */
+function optsArg(opts: ActionOpts | undefined): string {
+  const parts = [
+    ...(opts?.confirm === undefined ? [] : [`confirm: ${JSON.stringify(opts.confirm)}`]),
+    ...(opts?.refreshes === undefined || opts.refreshes.length === 0
+      ? []
+      : [`refresh: () => { ${opts.refreshes.map((n) => `${n}.reload();`).join(" ")} }`]),
+  ];
+  return parts.length === 0 ? "" : `, { ${parts.join(", ")} }`;
+}
+
+/**
+ * The route and title maps — a module with **no** `"use client"`.
+ *
+ * Under React Server Components a server module importing a client module receives
+ * client *references*, not values: `Object.keys(pages)` on a `"use client"` module is
+ * `[]`, so a host that mounts routes from a server component sees no pages at all and
+ * 404s every request without an error to show for it. The maps are data the host reads;
+ * the page components are the client half. They cannot live in one module, so they
+ * don't — `views.tsx` carries the directive and this file imports from it, which is the
+ * same split a hand-written app in an RSC host already uses.
+ */
 export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
+  const e = new Emitter();
+  e.line(HEADER);
+  e.line();
+  // A type-only import: this module names React's component type and evaluates nothing
+  // from it, which is exactly what makes it safe to read from a server component.
+  e.line('import type * as React from "react";');
+  if (app.spec.pages.length > 0) {
+    const names = app.spec.pages.map((_, index) => `Page_${index}`).join(", ");
+    e.line(`import { ${names} } from "${rel(config, "./views")}";`);
+  }
+  e.line();
+
+  e.line(`export const pages: ${PAGES_TYPE} = {`);
+  e.indent();
+  app.spec.pages.forEach((page, index) => {
+    e.line(`${JSON.stringify(page.route)}: Page_${index},`, ["pages", page.route]);
+  });
+  e.dedent();
+  e.line("};");
+  e.line();
+
+  // `title:` is a page-level fact with no page-level place to render it: nova ships no
+  // components (§2) and `states` names only the loading and error ones, so there is no shell
+  // component to hand it to and inventing one would mean new required config for a
+  // component every consumer would have to write. It is emitted as a map instead —
+  // the same shape, and the same contract, as `pages` and `handlers`: nova emits it,
+  // the host mounts it wherever its own layout puts a title. Always emitted, even when
+  // empty, so the module's exports do not change shape with the spec.
+  e.line(`export const titles: ${TITLES_TYPE} = {`);
+  e.indent();
+  for (const page of app.spec.pages) {
+    if (page.title === undefined) continue;
+    e.line(`${JSON.stringify(page.route)}: ${JSON.stringify(page.title)},`, [
+      "pages",
+      page.route,
+      "title",
+    ]);
+  }
+  e.dedent();
+  e.line("};");
+
+  return { name: "pages.tsx", text: e.text(), map: e.map() };
+}
+
+/** The page components themselves: the `"use client"` half of the emitted pair. */
+export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
   const e = new Emitter();
   const byModule = new Map<string, string[]>();
   for (const c of app.components) {
@@ -127,7 +225,13 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     const paramLocals =
       used.length > 0 ? routeParams : routeParams.filter((name) => boundParams.has(name));
 
-    e.line(`function Page_${index}({ params }: { params: Record<string, string> }) {`, path);
+    // Exported because pages.tsx builds the route map out of these, and annotated
+    // because that is what keeps `import * as React` a used import under
+    // `noUnusedLocals` while still putting React in scope for a host on classic JSX.
+    e.line(
+      `export function Page_${index}({ params }: { params: Record<string, string> }): React.ReactElement {`,
+      path,
+    );
     e.indent();
     // `params` is destructured out of the props object, so under `noUnusedLocals` it has
     // to be read. Narrowing a route param into a local already reads it; only a page that
@@ -167,15 +271,15 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
       const typeArgs =
         app.loaderArity[name] === 0 ? `<${cap(name)}>` : `<${cap(name)}, ${cap(name)}Input>`;
       e.line(
-        `const ${name} = useLoader${typeArgs}("/_data/${name}", ${query});`,
+        `const ${name} = useLoader${typeArgs}("${urlFor(config, "_data", name)}", ${query});`,
         app.loaderOrigins[name],
       );
     }
-    const confirms = confirmByAction(page.sections);
+    const options = optionsByAction(page.sections);
     for (const name of usedActions) {
-      const confirm = confirms.get(name);
-      const opts = confirm === undefined ? "" : `, { confirm: ${JSON.stringify(confirm)} }`;
-      e.line(`const ${name}Action = useAction("/_actions/${name}"${opts});`);
+      e.line(
+        `const ${name}Action = useAction("${urlFor(config, "_actions", name)}"${optsArg(options.get(name))});`,
+      );
     }
     // One sort state per page (NOVA1011 rejects a second sortable section), hoisted like
     // every other hook. `sortState` rather than `sort` so it does not collide with a
@@ -191,12 +295,10 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
       const initial = (section.fields ?? [])
         .map((f) => `${JSON.stringify(f.name)}: ${JSON.stringify(f.initial)}`)
         .join(", ");
-      const opts =
-        section.confirm === undefined ? "" : `, { confirm: ${JSON.stringify(section.confirm)} }`;
       e.line(
-        `const ${action}Form = useForm<${cap(action)}Input>("/_actions/${action}", ${
+        `const ${action}Form = useForm<${cap(action)}Input>("${urlFor(config, "_actions", action)}", ${
           initial === "" ? "{}" : `{ ${initial} }`
-        }${opts});`,
+        }${optsArg(optsOf(section))});`,
         formPath,
       );
     }
@@ -220,36 +322,7 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.line();
   });
 
-  e.line(`export const pages: ${PAGES_TYPE} = {`);
-  e.indent();
-  app.spec.pages.forEach((page, index) => {
-    e.line(`${JSON.stringify(page.route)}: Page_${index},`, ["pages", page.route]);
-  });
-  e.dedent();
-  e.line("};");
-  e.line();
-
-  // `title:` is a page-level fact with no page-level place to render it: nova ships no
-  // components (§2) and `states` names only loading/error/empty, so there is no shell
-  // component to hand it to and inventing one would mean new required config for a
-  // component every consumer would have to write. It is emitted as a map instead —
-  // the same shape, and the same contract, as `pages` and `handlers`: nova emits it,
-  // the host mounts it wherever its own layout puts a title. Always emitted, even when
-  // empty, so the module's exports do not change shape with the spec.
-  e.line(`export const titles: ${TITLES_TYPE} = {`);
-  e.indent();
-  for (const page of app.spec.pages) {
-    if (page.title === undefined) continue;
-    e.line(`${JSON.stringify(page.route)}: ${JSON.stringify(page.title)},`, [
-      "pages",
-      page.route,
-      "title",
-    ]);
-  }
-  e.dedent();
-  e.line("};");
-
-  return { name: "pages.tsx", text: e.text(), map: e.map() };
+  return { name: "views.tsx", text: e.text(), map: e.map() };
 
   /** `a={x} b={y}`, sorted by prop name so emission is byte-deterministic. */
   function attrs(entries: Map<string, string>): string {

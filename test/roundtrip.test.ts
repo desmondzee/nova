@@ -70,9 +70,9 @@ describe("actions, compute bindings and nested children", () => {
   it("binds an action to a component prop and emits its POST handler", async () => {
     const appDir = app("app-actions");
     const result = await compileApp(appDir, withForms(appDir));
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
-    expect(pages).toContain("onSubmit={saveTripAction.run}");
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
+    expect(views).toContain("onSubmit={saveTripAction.run}");
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).toContain('"POST /_actions/saveTrip"');
     expect(handlers).toContain("await actions.saveTrip(");
@@ -88,9 +88,9 @@ describe("actions, compute bindings and nested children", () => {
   it("passes a compute function through by reference, with no HTTP handler", async () => {
     const appDir = app("app-actions");
     const result = await compileApp(appDir, withForms(appDir));
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain('import * as compute from "../compute";');
-    expect(pages).toContain("format={compute.formatKm}");
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain('import * as compute from "../compute";');
+    expect(views).toContain("format={compute.formatKm}");
     // §6.4: pure, bundled into the client. No endpoint, and no entry in handlers.ts.
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).not.toContain("formatKm");
@@ -100,8 +100,8 @@ describe("actions, compute bindings and nested children", () => {
   it("nests a section's children inside its element, indented", async () => {
     const appDir = app("app-actions");
     const result = await compileApp(appDir, withForms(appDir));
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    const lines = pages.split("\n");
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    const lines = views.split("\n");
     const open = lines.findIndex((l) => l.includes("<Panel "));
     const close = lines.findIndex((l) => l.includes("</Panel>"));
     expect(open).toBeGreaterThan(-1);
@@ -122,7 +122,7 @@ describe("actions, compute bindings and nested children", () => {
     // nested section reports against the parent — or, worse, nothing at all.
     const appDir = app("app-actions");
     const result = await compileApp(appDir, withForms(appDir));
-    const file = result.files.find((f) => f.name === "pages.tsx")!;
+    const file = result.files.find((f) => f.name === "views.tsx")!;
     const lineNo = file.text.split("\n").findIndex((l) => l.includes("<Formatter ")) + 1;
     // Re-valued: the path now carries the parent's own YAML key, because that is where
     // the document holds the children — `sections[0].Panel.children[1]`. Without it,
@@ -148,12 +148,12 @@ describe("table sorting", () => {
     });
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
     expect(result.ok).toBe(true);
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain("const sortState = useSort();");
-    expect(pages).toContain("onSort={sortState.set}");
-    expect(pages).toContain("sort={sortState.value}");
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain("const sortState = useSort();");
+    expect(views).toContain("onSort={sortState.set}");
+    expect(views).toContain("sort={sortState.value}");
     // `sortable` is forwarded too — the table decides which headers are clickable.
-    expect(pages).toContain('sortable={["date","km"]}');
+    expect(views).toContain('sortable={["date","km"]}');
     const runtime = result.files.find((f) => f.name === "runtime.tsx")!.text;
     expect(runtime).toContain("export function useSort");
     expect(runtime).toContain("window.history.replaceState");
@@ -162,7 +162,7 @@ describe("table sorting", () => {
   it("emits no sort machinery for an app with no sortable section", async () => {
     const appDir = app("app-basic");
     const result = await compileApp(appDir, configFor(appDir));
-    for (const name of ["runtime.tsx", "pages.tsx"]) {
+    for (const name of ["runtime.tsx", "views.tsx"]) {
       expect(result.files.find((f) => f.name === name)!.text).not.toContain("useSort");
     }
   });
@@ -190,8 +190,8 @@ describe("forms", () => {
   it("holds the form's values in useForm, typed by the action's own input", async () => {
     const appDir = app("app-form");
     const result = await compileApp(appDir, withForms(appDir));
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain(
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain(
       'const saveTripForm = useForm<SaveTripInput>("/_actions/saveTrip", { "date": "", "km": 0, "purpose": "" }, { confirm: "Save this trip?" });',
     );
     const types = result.files.find((f) => f.name === "types.ts")!.text;
@@ -203,16 +203,16 @@ describe("forms", () => {
   it("wires each field's value, change and error to the form state", async () => {
     const appDir = app("app-form");
     const result = await compileApp(appDir, withForms(appDir));
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain(
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain(
       '<NumberField error={saveTripForm.errors["km"]} label={"Distance (km)"} name={"km"} onChange={(value) => saveTripForm.set("km", value)} value={saveTripForm.values["km"]} />',
     );
     // The form shell gets the submit callback, the busy flag and the form-level error.
-    expect(pages).toContain(
+    expect(views).toContain(
       "<Form busy={saveTripForm.busy} error={saveTripForm.error} onSubmit={saveTripForm.submit}>",
     );
     // `initial` is nova's, not the component's: it seeds useForm and is not forwarded.
-    expect(pages).not.toContain("initial=");
+    expect(views).not.toContain("initial=");
     // A form's action still gets its POST handler.
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).toContain('"POST /_actions/saveTrip"');
@@ -225,11 +225,11 @@ describe("forms", () => {
     const appDir = app("app-form");
     const result = await compileApp(appDir, withForms(appDir));
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain(
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain(
       'const purposes = useLoader<Purposes, PurposesInput>("/_data/purposes", { "month": filters["month"] });',
     );
-    expect(pages).toContain("options={purposes.value}");
+    expect(views).toContain("options={purposes.value}");
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).toContain('"GET /_data/purposes"');
   });
@@ -288,12 +288,12 @@ describe("forms", () => {
     expect(withFormRuntime).toContain("export function useForm");
     // useForm submits through useAction, so that hook comes with it…
     expect(withFormRuntime).toContain("export function useAction");
-    // …but pages.tsx must not import useAction, which no page here calls directly.
-    const pages = (await compileApp(appDir, withForms(appDir))).files.find(
-      (f) => f.name === "pages.tsx",
+    // …but views.tsx must not import useAction, which no page here calls directly.
+    const views = (await compileApp(appDir, withForms(appDir))).files.find(
+      (f) => f.name === "views.tsx",
     )!.text;
-    expect(pages).toContain("useForm");
-    expect(pages).not.toContain("useAction");
+    expect(views).toContain("useForm");
+    expect(views).not.toContain("useAction");
 
     const plain = app("app-basic");
     const plainRuntime = (await compileApp(plain, configFor(plain))).files.find(
@@ -316,19 +316,19 @@ describe("confirmation before a destructive action", () => {
     });
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
     expect(result.ok).toBe(true);
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain(
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain(
       'const deleteTripAction = useAction("/_actions/deleteTrip", { confirm: "Delete this trip?" });',
     );
     // Consumed by nova rather than forwarded — ActionButton declares no `confirm` prop.
-    expect(pages).not.toContain("confirm={");
+    expect(views).not.toContain("confirm={");
   });
 
   it("emits useAction with one argument when no section asks to confirm", async () => {
     const appDir = app("app-actions");
     const result = await compileApp(appDir, withForms(appDir));
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
   });
 });
 
@@ -344,11 +344,11 @@ describe("filter writes", () => {
     });
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
     expect(result.ok).toBe(true);
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain("value={filters.month}");
-    expect(pages).toContain('onChange={(value: string) => filters.set("month", value)}');
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain("value={filters.month}");
+    expect(views).toContain('onChange={(value: string) => filters.set("month", value)}');
     // A page whose only filter use is a write still needs the local and the hook.
-    expect(pages).toContain("const filters = useFilters(");
+    expect(views).toContain("const filters = useFilters(");
     const runtime = result.files.find((f) => f.name === "runtime.tsx")!.text;
     expect(runtime).toContain("export function useFilters");
   });
@@ -392,7 +392,7 @@ describe("round trip", () => {
     // The emitter maps whole JSX elements, so the origin is the `- Table:` section
     // node on line 6 — not the `rows:` line that supplied the offending prop.
     expect(mismatch!.line).toBe(6);
-    expect(mismatch!.related?.[0]?.file).toContain("pages.tsx");
+    expect(mismatch!.related?.[0]?.file).toContain("views.tsx");
   });
 
   it("never leaves a diagnostic pointing only at generated code", async () => {
@@ -430,9 +430,9 @@ describe("round trip", () => {
     const result = await compileApp(appDir, config);
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
     expect(result.ok).toBe(true);
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).not.toContain("useFilters");
-    expect(pages).not.toContain("const filters");
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).not.toContain("useFilters");
+    expect(views).not.toContain("const filters");
   });
 
   it("resolves app-root imports correctly under a nested outDir", async () => {
@@ -475,9 +475,9 @@ describe("round trip", () => {
     const result = await compileApp(appDir, configFor(appDir));
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
     expect(result.ok).toBe(true);
-    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
-    expect(pages).toContain('const params_id = params["id"] ?? "";');
-    expect(pages).toContain('useLoader<Trip, TripInput>("/_data/trip", { "id": params_id });');
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain('const params_id = params["id"] ?? "";');
+    expect(views).toContain('useLoader<Trip, TripInput>("/_data/trip", { "id": params_id });');
   });
 
   it("reports a loader input that neither params nor filters supply, at the spec line", async () => {

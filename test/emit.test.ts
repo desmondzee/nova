@@ -4,7 +4,14 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { readCatalogs } from "../src/compile/catalog.js";
 import type { NovaConfig } from "../src/compile/config.js";
-import { emitContract, emitHandlers, emitPages, emitRuntime, emitTypes } from "../src/compile/emit/index.js";
+import {
+  emitContract,
+  emitHandlers,
+  emitPages,
+  emitRuntime,
+  emitTypes,
+  emitViews,
+} from "../src/compile/emit/index.js";
 import { hooksUsed } from "../src/compile/emit/pages.js";
 import { loadSpecFile, type PositionMap } from "../src/compile/load.js";
 import { resolveApp } from "../src/compile/resolve.js";
@@ -174,9 +181,13 @@ describe("emitRuntime", () => {
   });
 });
 
-describe("emitPages", () => {
+// The page components and the route map are two modules now (views.tsx carries
+// "use client", pages.tsx must not), so an assertion about emitted JSX is asked of
+// emitViews and an assertion about the maps is asked of emitPages. Nothing about what is
+// asserted changed — only which of the pair is asked.
+describe("emitViews", () => {
   it("imports components from their catalog module and nothing from nova", () => {
-    const { text } = emitPages(resolved(), config);
+    const { text } = emitViews(resolved(), config);
     // "../catalog/ui" (relative to app.yaml) is rewritten by resolveApp to "../../catalog/ui"
     // as seen from APP_DIR/generated, where this import actually ends up. EmptyState is
     // absent: the fixture spec never renders it, and importing an unused component here
@@ -187,16 +198,24 @@ describe("emitPages", () => {
     expect(text).not.toContain("@platform/");
   });
 
+  it("renders literal props as literals and bindings as expressions", () => {
+    const { text } = emitViews(resolved(), config);
+    expect(text).toContain('label={"This month"}');
+    expect(text).toContain("rows={trips.value}");
+  });
+
+  it("maps a generated line back to the section that produced it", () => {
+    const { text, map } = emitViews(resolved(), config);
+    const lineNo = text.split("\n").findIndex((l) => l.includes("<Table")) + 1;
+    expect(map.get(lineNo)).toEqual(["pages", "/", "sections", 1]);
+  });
+});
+
+describe("emitPages", () => {
   it("exports a structurally typed pages map with no host type import", () => {
     const { text } = emitPages(resolved(), config);
     expect(text).toContain("export const pages: Record<");
     expect(text).toContain('"/": Page_0,');
-  });
-
-  it("renders literal props as literals and bindings as expressions", () => {
-    const { text } = emitPages(resolved(), config);
-    expect(text).toContain('label={"This month"}');
-    expect(text).toContain("rows={trips.value}");
   });
 
   it("emits each page's title into a titles map rather than discarding it", () => {
@@ -220,11 +239,6 @@ describe("emitPages", () => {
     expect(text).toContain("export const titles: Record<string, string> = {\n};");
   });
 
-  it("maps a generated line back to the section that produced it", () => {
-    const { text, map } = emitPages(resolved(), config);
-    const lineNo = text.split("\n").findIndex((l) => l.includes("<Table")) + 1;
-    expect(map.get(lineNo)).toEqual(["pages", "/", "sections", 1]);
-  });
 });
 
 describe("emitHandlers", () => {
@@ -302,7 +316,9 @@ describe("zero-parameter loaders", () => {
 describe("typechecks emitted output", () => {
   it("produces no semantic diagnostics for the fixture app", () => {
     const app = resolved();
-    const files = [emitTypes, emitRuntime, emitPages, emitHandlers, emitContract].map((emit) => emit(app, config));
+    const files = [emitTypes, emitRuntime, emitViews, emitPages, emitHandlers, emitContract].map(
+      (emit) => emit(app, config),
+    );
 
     // Written alongside the fixture app (not a bare OS tmpdir) so that
     // node_modules resolution walking up from the generated files still
@@ -348,7 +364,7 @@ describe("determinism", () => {
   it("produces identical bytes on repeated runs", () => {
     const a = resolved();
     const b = resolved();
-    for (const emit of [emitTypes, emitRuntime, emitPages, emitHandlers, emitContract]) {
+    for (const emit of [emitTypes, emitRuntime, emitViews, emitPages, emitHandlers, emitContract]) {
       expect(emit(a, config).text).toBe(emit(b, config).text);
     }
   });
@@ -356,6 +372,6 @@ describe("determinism", () => {
   it("is insensitive to the order components were resolved in", () => {
     const app = resolved();
     const reordered = { ...app, components: [...app.components].reverse() };
-    expect(emitPages(reordered, config).text).toBe(emitPages(app, config).text);
+    expect(emitViews(reordered, config).text).toBe(emitViews(app, config).text);
   });
 });
