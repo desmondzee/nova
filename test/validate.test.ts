@@ -79,6 +79,14 @@ describe("validate", () => {
     expect(diagnostics.map((d) => d.code)).toContain("NOVA1005");
   });
 
+  it("rejects a filter named 'set', which would collide with useFilters' setter", () => {
+    const { diagnostics } = check(
+      'pages:\n  "/":\n    filters:\n      set: { type: month }\n    sections: []\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toContain("NOVA1001");
+    expect(diagnostics.find((d) => d.code === "NOVA1001")!.message).toContain("reserved");
+  });
+
   it("collects every problem rather than stopping at the first", () => {
     const { diagnostics } = check(
       'pages:\n  "/":\n    titel: a\n    sections: "nope"\n  bad:\n    sections: []\n',

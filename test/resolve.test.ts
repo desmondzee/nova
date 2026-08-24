@@ -39,8 +39,14 @@ describe("resolveApp", () => {
     // rewrites that to be correct from APP_DIR/generated instead, since that's where the
     // module specifier actually ends up (verbatim, in emitted code): one more ".." to
     // climb back out of "generated" than out of APP_DIR itself.
+    //
+    // EmptyState is deliberately absent: the fixture spec never renders it (no generated
+    // page emits the empty state yet — see README limitations), and states.loading/error
+    // are pulled in only because this fixture binds loaders. Forcing all three states
+    // into the import list regardless of use is exactly what broke a host with
+    // `noUnusedLocals` (see roundtrip.test.ts's "noUnusedLocals" case) — components here
+    // must mirror what pages.tsx actually imports.
     expect(resolved!.components).toEqual([
-      { name: "EmptyState", module: "../../catalog/ui" },
       { name: "ErrorNotice", module: "../../catalog/ui" },
       { name: "Loading", module: "../../catalog/ui" },
       { name: "StatCard", module: "../../catalog/ui" },

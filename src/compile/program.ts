@@ -7,6 +7,8 @@ export type ExportInfo = {
   file: string;
   line: number;
   col: number;
+  /** Parameter count of the first call signature, or 0 when the export isn't callable. */
+  paramCount: number;
 };
 
 export type ProgramHandle = { program: ts.Program; checker: ts.TypeChecker };
@@ -43,12 +45,14 @@ export function moduleExports(program: ts.Program, file: string): ExportInfo[] {
     const decl = declaration.getSourceFile();
     const { line, character } = decl.getLineAndCharacterOfPosition(declaration.getStart());
     const type = checker.getTypeOfSymbolAtLocation(symbol, declaration);
+    const callSignatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
     out.push({
       name: symbol.getName(),
-      callable: checker.getSignaturesOfType(type, ts.SignatureKind.Call).length > 0,
+      callable: callSignatures.length > 0,
       file: decl.fileName,
       line: line + 1,
       col: character + 1,
+      paramCount: callSignatures[0]?.parameters.length ?? 0,
     });
   }
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

@@ -2,7 +2,7 @@ import type { PropValue, SectionSpec } from "../../schema/types.js";
 import type { NovaConfig } from "../config.js";
 import type { ResolvedApp } from "../resolve.js";
 import { Emitter, type SpecPath } from "./emitter.js";
-import { HEADER, cap, rel, type EmittedFile } from "./types.js";
+import { HEADER, appRel, cap, rel, type EmittedFile } from "./types.js";
 
 const PAGES_TYPE =
   "Record<string, React.ComponentType<{ params: Record<string, string> }>>";
@@ -39,8 +39,20 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     const names = [...new Set(byModule.get(module)!)].sort();
     e.line(`import { ${names.join(", ")} } from "${module}";`);
   }
-  if (app.computes.length > 0) e.line(`import * as compute from "${rel(config, "../compute")}";`);
-  e.line(`import { useAction, useFilters, useLoader } from "${rel(config, "./runtime")}";`);
+  if (app.computes.length > 0) e.line(`import * as compute from "${appRel(config, "compute")}";`);
+  // Each hook is imported only when some page actually needs it. A host with
+  // `noUnusedLocals` fails the build on an unconditional import that a given spec
+  // never calls — a spec with no filters (useFilters), no bound action (useAction), or
+  // no data binding at all (useLoader) is entirely ordinary, not a spec bug.
+  const usesFilters = app.spec.pages.some((p) => p.filters.length > 0);
+  const usesActions = app.actions.length > 0;
+  const usesLoaders = app.loaders.length > 0;
+  const hooks = [
+    ...(usesActions ? ["useAction"] : []),
+    ...(usesFilters ? ["useFilters"] : []),
+    ...(usesLoaders ? ["useLoader"] : []),
+  ];
+  if (hooks.length > 0) e.line(`import { ${hooks.join(", ")} } from "${rel(config, "./runtime")}";`);
   for (const name of app.loaders) {
     e.line(`import type { ${cap(name)} } from "${rel(config, "./types")}";`);
   }

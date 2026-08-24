@@ -1,0 +1,4 @@
+pages:
+  "/":
+    sections:
+      - StatCard: { label: Status, value: data#status }

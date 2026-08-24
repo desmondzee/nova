@@ -1,0 +1,6 @@
+pages:
+  "/":
+    sections:
+      - Table:
+          rows: data#trips
+          columns: [date]

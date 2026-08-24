@@ -14,8 +14,14 @@ import { createProgram } from "./program.js";
  * hand-written `data.ts`/`actions.ts`, or a host catalog component — and diagnostics on
  * those are deliberately dropped. That code already goes through the author's own
  * `tsc`, editor, and CI; duplicating it here would just be noise. The spec-to-code seam
- * itself stays covered because `__contract.ts` binds each loader/action/compute to its
- * derived type and is always one of the emitted files.
+ * itself stays covered because `pages.tsx`'s JSX binds every spec prop to the component
+ * and loader/action types it references — real React JSX typing, not a comparator nova
+ * maintains — and is always one of the emitted files. `__contract.ts` is a narrower,
+ * additional check: `XxxInput`/`Xxx` are themselves derived from the loader/action they
+ * are then assigned back to (`Parameters<typeof data.x>[0]`,
+ * `Awaited<ReturnType<typeof data.x>>`), so it cannot catch a prop/loader type
+ * mismatch — pages.tsx already does — but it does catch loader arity and a loader that
+ * isn't async, which pages.tsx's JSX has no occasion to exercise.
  *
  * Consequently, an empty result means the seam between the spec and the author's code
  * is clean — it does NOT mean the overall build is clean.

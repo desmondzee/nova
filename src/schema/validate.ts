@@ -134,6 +134,17 @@ export function validate(
         report("NOVA1002", `filter '${name}' is missing required key 'type'`, [...path, name]);
         continue;
       }
+      // useFilters returns { ...values, set }, so a filter literally named 'set' would
+      // collide with the setter at runtime — reuse the "unknown key" code since this is
+      // the same class of problem: a name that cannot be used in this position.
+      if (name === "set") {
+        report(
+          "NOVA1001",
+          "filter name 'set' is reserved — useFilters returns { ...values, set(...) }, so a filter named 'set' would collide with the setter",
+          [...path, name],
+        );
+        continue;
+      }
       const filter: FilterSpec = { name, type: raw.type };
       if (raw.default !== undefined) filter.default = raw.default;
       filters.push(filter);

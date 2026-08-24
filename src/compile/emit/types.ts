@@ -10,16 +10,38 @@ export const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export const rel = (config: NovaConfig, path: string) => `${path}${config.importExtension ?? ""}`;
 
+/**
+ * Specifier for a module that lives at the app root (`data.ts`, `actions.ts`,
+ * `compute.ts`), as seen from the emitted output directory. `outDir` is one directory
+ * name relative to the app root in the common case ("generated" → "../data"), but it may
+ * be nested arbitrarily deep (e.g. "src/generated" → "../../data"), so the number of
+ * "../" segments must track outDir's own depth rather than assume exactly one.
+ */
+export function appRel(config: NovaConfig, name: string): string {
+  const depth = Math.max(1, config.outDir.split(/[\\/]+/).filter(Boolean).length);
+  return rel(config, "../".repeat(depth) + name);
+}
+
 export function emitTypes(app: ResolvedApp, config: NovaConfig): EmittedFile {
   const e = new Emitter();
   e.line(HEADER).line();
-  if (app.loaders.length > 0) e.line(`import type * as data from "${rel(config, "../data")}";`);
-  if (app.actions.length > 0) e.line(`import type * as actions from "${rel(config, "../actions")}";`);
-  if (app.computes.length > 0) e.line(`import type * as compute from "${rel(config, "../compute")}";`);
+  if (app.loaders.length > 0) e.line(`import type * as data from "${appRel(config, "data")}";`);
+  if (app.actions.length > 0) e.line(`import type * as actions from "${appRel(config, "actions")}";`);
+  if (app.computes.length > 0) e.line(`import type * as compute from "${appRel(config, "compute")}";`);
   e.line();
   for (const name of app.loaders) {
     e.line(`export type ${cap(name)} = Awaited<ReturnType<typeof data.${name}>>;`);
-    e.line(`export type ${cap(name)}Input = Parameters<typeof data.${name}>[0];`);
+    // Parameters<typeof data.x>[0] indexes into an empty tuple for a zero-parameter
+    // loader — a TS error with no relation to anything the author wrote. A loader with
+    // no inputs is a normal pattern, so it gets a plain empty-object Input type instead;
+    // `data.x` is still assignable to `(input: Record<string, never>) => ...` in
+    // __contract.ts because a zero-parameter function accepts being called with (and
+    // ignores) any extra argument the caller's type signature offers.
+    e.line(
+      app.loaderArity[name] === 0
+        ? `export type ${cap(name)}Input = Record<string, never>;`
+        : `export type ${cap(name)}Input = Parameters<typeof data.${name}>[0];`,
+    );
   }
   for (const name of app.actions) {
     e.line(`export type ${cap(name)} = typeof actions.${name};`);

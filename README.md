@@ -121,7 +121,34 @@ diagnostics on the files nova emits, not on the app's own hand-written
 modules or on host catalog components — those already go through the host's
 own `tsc`, editor, and CI, and duplicating that here would just be noise. An
 empty diagnostics array means the seam between the spec and your code is
-clean; it does not mean the overall build is clean.
+clean; it does not mean the overall build is clean. That seam check lives in
+`pages.tsx`: its JSX binds every prop to the component and loader/action type
+the spec references, so a mismatch is real React JSX typing, not a
+comparator nova maintains. `__contract.ts` is a narrower, additional check —
+its `XxxInput`/`Xxx` types are derived from the very loader/action they are
+assigned back to, so it cannot catch a spec/code type mismatch (`pages.tsx`
+already does); it catches loader arity and a loader that isn't declared
+`async`, which `pages.tsx`'s JSX has no occasion to exercise.
+
+**Route params are not yet passed to loaders.** A loader's query object is built
+from the page's filters only (`{ [filterName]: filters[filterName], ... }`);
+route params bound with `params.id` reach a component's props but are not
+merged into the object a loader receives. A loader that needs a route param
+today has to read it some other way.
+
+**`confirm:` is not implemented.** The spec format and `useAction`'s runtime
+support a confirmation prompt before a destructive action (`opts.confirm`,
+plumbed through to `window.confirm`), but there is currently no schema key
+that sets it — `validate` has no `confirm:` handling, so nothing in a spec can
+populate `opts.confirm` yet.
+
+**`fieldErrors` and the empty state are not consumed by any generated page.**
+`useAction`'s `ActionState` carries `fieldErrors`, and `states.empty` is
+validated against the catalog on every compile, but no generated `pages.tsx`
+currently renders either one: no emitted form wires a returned field error
+back onto its input, and the empty state component is never rendered even
+when a loader's result is empty. Both are real, typechecked runtime/catalog
+surface — just not yet reached by codegen.
 
 **The input hash does not cover source file contents.** The stamp written
 into each emitted file's header covers the spec source, the whole config

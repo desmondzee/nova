@@ -52,6 +52,15 @@ describe("emitTypes", () => {
     const { text } = emitTypes(resolved(), { ...config, importExtension: ".js" });
     expect(text).toContain('import type * as data from "../data.js";');
   });
+
+  it("climbs one '../' per outDir path segment, not a hardcoded single level", () => {
+    // outDir nested two levels deep ("src/generated") needs two "../" to reach data.ts
+    // at the app root, not the one that's correct only for a one-level outDir like
+    // "generated". Exercises the same bug class as pages.ts's "../compute" import and
+    // handlers.ts/contract.ts's "../data"/"../actions" imports (see appRel in types.ts).
+    const { text } = emitTypes(resolved(), { ...config, outDir: "src/generated" });
+    expect(text).toContain('import type * as data from "../../data";');
+  });
 });
 
 describe("emitRuntime", () => {
@@ -68,10 +77,11 @@ describe("emitPages", () => {
   it("imports components from their catalog module and nothing from nova", () => {
     const { text } = emitPages(resolved(), config);
     // "../catalog/ui" (relative to app.yaml) is rewritten by resolveApp to "../../catalog/ui"
-    // as seen from APP_DIR/generated, where this import actually ends up.
-    expect(text).toContain(
-      'import { EmptyState, ErrorNotice, Loading, StatCard, Table } from "../../catalog/ui";',
-    );
+    // as seen from APP_DIR/generated, where this import actually ends up. EmptyState is
+    // absent: the fixture spec never renders it, and importing an unused component here
+    // would fail a host tsconfig with `noUnusedLocals`.
+    expect(text).toContain('import { ErrorNotice, Loading, StatCard, Table } from "../../catalog/ui";');
+    expect(text).not.toContain("EmptyState");
     expect(text).not.toContain("@light/nova");
     expect(text).not.toContain("@platform/");
   });
@@ -114,6 +124,56 @@ describe("emitContract", () => {
   it("binds each referenced export to its derived type", () => {
     const { text } = emitContract(resolved(), config);
     expect(text).toContain("const _trips: (input: TripsInput) => Promise<Trips> = data.trips;");
+  });
+
+  it("maps each loader/action binding line to the spec position that referenced it", () => {
+    // Before the fix, contract.ts mapped every line to ["loaders", name] / ["actions",
+    // name] — paths that don't exist in the YAML document (only "pages" does), so
+    // positions.at() silently fell back to the document root for every contract
+    // diagnostic. loaderOrigins/actionOrigins (resolve.ts) instead record the first
+    // spec path that actually referenced the loader/action.
+    const app = resolved();
+    const { map, text } = emitContract(app, config);
+    const lineNo = text.split("\n").findIndex((l) => l.includes("const _trips:")) + 1;
+    expect(map.get(lineNo)).toEqual(app.loaderOrigins.trips);
+    expect(app.loaderOrigins.trips).not.toEqual(["loaders", "trips"]);
+  });
+});
+
+describe("zero-parameter loaders", () => {
+  const zeroParamSpecFile = here("./fixtures/app-zeroparam/app.yaml");
+  const zeroParamConfig: NovaConfig = { ...config, tsconfigPath: here("./fixtures/tsconfig.json") };
+
+  function resolvedZeroParam() {
+    const source = readFileSync(zeroParamSpecFile, "utf8");
+    const { raw, positions } = loadSpecFile(zeroParamSpecFile, source);
+    const { spec } = validate(raw, positions);
+    const { catalog } = readCatalogs(zeroParamConfig, zeroParamSpecFile);
+    return resolveApp(spec!, {
+      config: zeroParamConfig,
+      appDir: dirname(zeroParamSpecFile),
+      specFile: zeroParamSpecFile,
+      catalog,
+      positions,
+    }).resolved!;
+  }
+
+  it("resolves the loader's declared parameter count", () => {
+    expect(resolvedZeroParam().loaderArity).toEqual({ status: 0 });
+  });
+
+  it("gives a zero-parameter loader a plain Input type instead of indexing an empty tuple", () => {
+    // Parameters<typeof data.status>[0] is a type error for a zero-parameter loader —
+    // there is no element at index 0 of an empty tuple.
+    const { text } = emitTypes(resolvedZeroParam(), zeroParamConfig);
+    expect(text).toContain("export type StatusInput = Record<string, never>;");
+    expect(text).not.toContain("Parameters<typeof data.status>[0]");
+  });
+
+  it("calls a zero-parameter loader's handler with no argument", () => {
+    const { text } = emitHandlers(resolvedZeroParam(), zeroParamConfig);
+    expect(text).toContain("await data.status()");
+    expect(text).not.toContain("data.status(input");
   });
 });
 

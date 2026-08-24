@@ -4,7 +4,10 @@ import type { AppSpec, PageSpec, SectionSpec } from "../schema/types.js";
 import type { Catalog } from "./catalog.js";
 import type { NovaConfig } from "./config.js";
 import type { PositionMap } from "./load.js";
-import { createProgram, moduleExports, resolveModule } from "./program.js";
+import { createProgram, moduleExports, resolveModule, type ExportInfo } from "./program.js";
+
+/** A path into the YAML document, e.g. ["pages", "/", "sections", 1, "rows"]. */
+export type SpecPath = (string | number)[];
 
 // Same admission rule catalogs use: only capitalised, callable exports count as
 // usable components.
@@ -25,6 +28,14 @@ export type ResolvedApp = {
   loaders: string[];
   actions: string[];
   computes: string[];
+  /** Parameter count of each loader's underlying data.ts export. A loader with no
+   * declared parameters (0) is called with no argument, and gets a plain `Input` type
+   * instead of indexing into an empty `Parameters<...>` tuple. */
+  loaderArity: Record<string, number>;
+  /** First spec location that referenced each loader/action, used to give contract
+   * diagnostics (arity, non-async) a real position instead of the document root. */
+  loaderOrigins: Record<string, SpecPath>;
+  actionOrigins: Record<string, SpecPath>;
 };
 
 type Ctx = {
@@ -53,25 +64,25 @@ const EXPORT_EXTS = [".ts", ".tsx"] as const;
  * build every candidate path up front and create a single program that covers
  * all of them, then read each base's exports from that same program.
  */
-function exportsOf(appDir: string, tsconfigPath: string): Map<string, Set<string>> {
+function exportsOf(appDir: string, tsconfigPath: string): Map<string, Map<string, ExportInfo>> {
   const roots = EXPORT_BASES.flatMap((base) =>
     EXPORT_EXTS.map((ext) => join(appDir, base + ext)),
   );
   const handle = createProgram({ tsconfigPath, roots });
 
-  const result = new Map<string, Set<string>>();
+  const result = new Map<string, Map<string, ExportInfo>>();
   for (const base of EXPORT_BASES) {
-    let exportsSet = new Set<string>();
+    let exportsByName = new Map<string, ExportInfo>();
     if (handle) {
       for (const ext of EXPORT_EXTS) {
         const file = join(appDir, base + ext);
         if (handle.program.getSourceFile(file)) {
-          exportsSet = new Set(moduleExports(handle.program, file).map((e) => e.name));
+          exportsByName = new Map(moduleExports(handle.program, file).map((e) => [e.name, e]));
           break;
         }
       }
     }
-    result.set(base, exportsSet);
+    result.set(base, exportsByName);
   }
   return result;
 }
@@ -85,11 +96,14 @@ export function resolveApp(
   const loaders = new Set<string>();
   const actions = new Set<string>();
   const computes = new Set<string>();
+  const loaderArity: Record<string, number> = {};
+  const loaderOrigins: Record<string, SpecPath> = {};
+  const actionOrigins: Record<string, SpecPath> = {};
 
   const exportsByBase = exportsOf(ctx.appDir, ctx.config.tsconfigPath);
-  const dataExports = exportsByBase.get("data") ?? new Set<string>();
-  const actionExports = exportsByBase.get("actions") ?? new Set<string>();
-  const computeExports = exportsByBase.get("compute") ?? new Set<string>();
+  const dataExports = exportsByBase.get("data") ?? new Map<string, ExportInfo>();
+  const actionExports = exportsByBase.get("actions") ?? new Map<string, ExportInfo>();
+  const computeExports = exportsByBase.get("compute") ?? new Map<string, ExportInfo>();
 
   // Resolve every distinct local component module referenced by the spec once,
   // and cover them all with a single additional program (never one program per
@@ -155,9 +169,22 @@ export function resolveApp(
     walk(page.sections, page, routeParams, filterNames, ["pages", page.route, "sections"]);
   }
 
-  // Every generated page can render these three states, so they are always imported.
-  for (const name of [ctx.config.states.loading, ctx.config.states.error, ctx.config.states.empty]) {
+  // A bad `states` config should fail loudly regardless of whether a given spec ends up
+  // rendering each state, so all three are validated against the catalog unconditionally.
+  // But only pull a state component into the emitted import list where a generated page
+  // actually renders it: loading/error appear only on a page that binds at least one
+  // loader (see emitPages), and the empty state isn't rendered by any generated page yet
+  // (see README limitations) — importing it unconditionally is exactly what produces an
+  // unused-import error on a host with `noUnusedLocals`.
+  const stateNames = {
+    loading: ctx.config.states.loading,
+    error: ctx.config.states.error,
+    empty: ctx.config.states.empty,
+  };
+  const stateEntries = new Map<keyof typeof stateNames, ReturnType<Catalog["get"]>>();
+  for (const [key, name] of Object.entries(stateNames) as [keyof typeof stateNames, string][]) {
     const entry = ctx.catalog.get(name);
+    stateEntries.set(key, entry);
     if (!entry) {
       out.push(
         diagnostic(
@@ -167,9 +194,13 @@ export function resolveApp(
           { hint: `available: ${ctx.catalog.names().join(", ")}` },
         ),
       );
-      continue;
     }
-    addComponent(name, specifierFromOutDir(entry.module, entry.file), ctx.positions.at([]));
+  }
+  if (loaders.size > 0) {
+    for (const key of ["loading", "error"] as const) {
+      const entry = stateEntries.get(key);
+      if (entry) addComponent(stateNames[key], specifierFromOutDir(entry.module, entry.file), ctx.positions.at([]));
+    }
   }
 
   const fatal = out.some((d) => d.severity === "error");
@@ -184,6 +215,9 @@ export function resolveApp(
           loaders: sorted(loaders),
           actions: sorted(actions),
           computes: sorted(computes),
+          loaderArity,
+          loaderOrigins,
+          actionOrigins,
         },
     diagnostics: out,
   };
@@ -252,11 +286,20 @@ export function resolveApp(
         if (ref.kind === "data") {
           if (!dataExports.has(ref.name)) {
             report("NOVA2002", `data.ts has no export '${ref.name}'`, propAt, dataExports, ref.name);
-          } else loaders.add(ref.name);
+          } else {
+            loaders.add(ref.name);
+            if (loaderArity[ref.name] === undefined) {
+              loaderArity[ref.name] = dataExports.get(ref.name)!.paramCount;
+            }
+            if (loaderOrigins[ref.name] === undefined) loaderOrigins[ref.name] = [...at, propName];
+          }
         } else if (ref.kind === "actions") {
           if (!actionExports.has(ref.name)) {
             report("NOVA2003", `actions.ts has no export '${ref.name}'`, propAt, actionExports, ref.name);
-          } else actions.add(ref.name);
+          } else {
+            actions.add(ref.name);
+            if (actionOrigins[ref.name] === undefined) actionOrigins[ref.name] = [...at, propName];
+          }
         } else if (ref.kind === "compute") {
           if (!computeExports.has(ref.name)) {
             report("NOVA2004", `compute.ts has no export '${ref.name}'`, propAt, computeExports, ref.name);
@@ -282,10 +325,10 @@ export function resolveApp(
     code: string,
     message: string,
     at: { file: string; line: number; col: number },
-    available: Set<string>,
+    available: Map<string, ExportInfo>,
     name: string,
   ): void {
-    const s = suggest(name, [...available]);
+    const s = suggest(name, [...available.keys()]);
     out.push(diagnostic(code, message, at, s === undefined ? {} : { hint: `did you mean '${s}'?` }));
   }
 }
