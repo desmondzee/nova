@@ -10,3 +10,4 @@ export type {
   PropValue,
   SectionSpec,
 } from "./types.js";
+export { validate } from "./validate.js";
