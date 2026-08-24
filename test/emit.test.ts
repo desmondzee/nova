@@ -35,6 +35,22 @@ function resolved() {
   }).resolved!;
 }
 
+/** Resolve any fixture app, for cases app-basic cannot express. */
+function resolvedFixture(name: string) {
+  const specFile = here(`./fixtures/${name}/app.yaml`);
+  const source = readFileSync(specFile, "utf8");
+  const { raw, positions } = loadSpecFile(specFile, source);
+  const { spec } = validate(raw, positions);
+  const { catalog } = readCatalogs(config, specFile);
+  return resolveApp(spec!, {
+    config,
+    appDir: dirname(specFile),
+    specFile,
+    catalog,
+    positions,
+  }).resolved!;
+}
+
 function specPositions(): PositionMap {
   const source = readFileSync(SPEC_FILE, "utf8");
   return loadSpecFile(SPEC_FILE, source).positions;
@@ -81,11 +97,40 @@ describe("emitTypes", () => {
 
 describe("emitRuntime", () => {
   it("emits the hooks generated pages depend on and imports nothing from nova", () => {
+    // Re-valued when emitRuntime started reading its arguments. app-basic binds loaders
+    // and reads a filter, but has no action binding, so `useAction` is now correctly
+    // absent — the assertion is the same one, applied to the hooks this app's pages.tsx
+    // actually imports rather than to all three unconditionally.
     const { text } = emitRuntime(resolved(), config);
-    for (const hook of ["useLoader", "useFilters", "useAction"]) {
+    for (const hook of ["useLoader", "useFilters"]) {
       expect(text).toContain(`export function ${hook}`);
     }
     expect(text).not.toContain("@light/nova");
+  });
+
+  it("omits a hook no page imports", () => {
+    // 43 of runtime.tsx's 116 lines were useAction, shipped into every app whether or
+    // not the spec bound a single action. The type it declares goes with it.
+    const { text } = emitRuntime(resolved(), config);
+    expect(text).not.toContain("useAction");
+    expect(text).not.toContain("ActionState");
+    expect(text).not.toContain("window.confirm");
+  });
+
+  it("emits an empty module when the spec needs no hook at all", () => {
+    // app-filters-only declares a filter that nothing reads and binds no loader, so
+    // pages.tsx imports nothing from ./runtime. Emitting a bare `import * as React`
+    // here would fail a host with noUnusedLocals.
+    const { text } = emitRuntime(resolvedFixture("app-filters-only"), config);
+    expect(text).toContain("export {};");
+    expect(text).not.toContain('import * as React');
+    expect(text).not.toContain("export function use");
+  });
+
+  it("keeps a hook that pages.tsx does import", () => {
+    const app = resolved();
+    const { text } = emitRuntime({ ...app, actions: ["saveTrip"] }, config);
+    expect(text).toContain("export function useAction");
   });
 });
 
@@ -232,7 +277,6 @@ describe("typechecks emitted output", () => {
       mkdirSync(generatedDir, { recursive: true });
 
       copyFileSync(here("./fixtures/app-basic/data.ts"), join(tmp, "data.ts"));
-      copyFileSync(here("./fixtures/app-basic/actions.ts"), join(tmp, "actions.ts"));
 
       for (const file of files) {
         writeFileSync(join(generatedDir, file.name), file.text);

@@ -57,19 +57,11 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.line(`import { ${names.join(", ")} } from "${module}";`);
   }
   if (app.computes.length > 0) e.line(`import * as compute from "${appRel(config, "compute")}";`);
-  // Each hook is imported only when some page actually needs it. A host with
-  // `noUnusedLocals` fails the build on an unconditional import that a given spec
-  // never calls — a spec with no filters (useFilters), no bound action (useAction), or
-  // no data binding at all (useLoader) is entirely ordinary, not a spec bug. A page can
-  // *declare* filters without anything reading them yet (see pageNeedsFilters below), so
-  // "has filters" alone is not sufficient here either.
-  const usesFilters = app.spec.pages.some(pageNeedsFilters);
-  const usesActions = app.actions.length > 0;
-  const usesLoaders = app.loaders.length > 0;
+  const { useAction, useFilters, useLoader } = hooksUsed(app);
   const hooks = [
-    ...(usesActions ? ["useAction"] : []),
-    ...(usesFilters ? ["useFilters"] : []),
-    ...(usesLoaders ? ["useLoader"] : []),
+    ...(useAction ? ["useAction"] : []),
+    ...(useFilters ? ["useFilters"] : []),
+    ...(useLoader ? ["useLoader"] : []),
   ];
   if (hooks.length > 0) e.line(`import { ${hooks.join(", ")} } from "${rel(config, "./runtime")}";`);
   for (const name of app.loaders) {
@@ -207,6 +199,30 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.dedent();
     e.line(`</${name}>`, path);
   }
+}
+
+/**
+ * Which runtime hooks this app's generated pages will actually import.
+ *
+ * A host with `noUnusedLocals` fails the build on an unconditional import that a given
+ * spec never calls — a spec with no filters, no bound action, or no data binding at all
+ * is entirely ordinary, not a spec bug. A page can also *declare* filters without
+ * anything reading them yet (see pageNeedsFilters), so "has filters" alone is not
+ * sufficient.
+ *
+ * `emitRuntime` reads the same answer, so the hooks runtime.tsx defines and the hooks
+ * pages.tsx imports agree by construction rather than by coincidence.
+ */
+export function hooksUsed(app: ResolvedApp): {
+  useAction: boolean;
+  useFilters: boolean;
+  useLoader: boolean;
+} {
+  return {
+    useAction: app.actions.length > 0,
+    useFilters: app.spec.pages.some(pageNeedsFilters),
+    useLoader: app.loaders.length > 0,
+  };
 }
 
 // A page's `filters` local is only worth declaring when something in that page's

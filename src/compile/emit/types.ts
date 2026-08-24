@@ -36,7 +36,6 @@ export function emitTypes(app: ResolvedApp, config: NovaConfig): EmittedFile {
   e.line(HEADER).line();
   if (app.loaders.length > 0) e.line(`import type * as data from "${appRel(config, "data")}";`);
   if (app.actions.length > 0) e.line(`import type * as actions from "${appRel(config, "actions")}";`);
-  if (app.computes.length > 0) e.line(`import type * as compute from "${appRel(config, "compute")}";`);
   e.line();
   for (const name of app.loaders) {
     e.line(`export type ${cap(name)} = Awaited<ReturnType<typeof data.${name}>>;`);
@@ -55,8 +54,8 @@ export function emitTypes(app: ResolvedApp, config: NovaConfig): EmittedFile {
   for (const name of app.actions) {
     e.line(`export type ${cap(name)} = typeof actions.${name};`);
   }
-  for (const name of app.computes) {
-    e.line(`export type ${cap(name)} = typeof compute.${name};`);
-  }
+  // No type is emitted for a `compute#` binding. pages.tsx imports the compute module
+  // itself and references the function directly, so a `typeof compute.x` alias here was
+  // one line per binding, in every app, that no emitted file ever imported.
   return { name: "types.ts", text: e.text(), map: e.map() };
 }

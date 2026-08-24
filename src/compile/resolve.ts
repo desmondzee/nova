@@ -115,10 +115,6 @@ export function resolveApp(
   const localHandle =
     localRoots.length > 0 ? createProgram({ tsconfigPath: ctx.config.tsconfigPath, roots: localRoots }) : null;
 
-  function localExportsOf(file: string) {
-    return localHandle ? moduleExports(localHandle.program, file) : [];
-  }
-
   // catalog.ts and the local-component resolution above both resolve a component's
   // module specifier relative to the spec file (ctx.appDir). But emitPages copies
   // `ModuleBinding.module` verbatim into a file that ends up written to
@@ -285,9 +281,9 @@ export function resolveApp(
             ),
           );
         } else {
-          const qualifying = localExportsOf(resolvedFile).filter(
-            (e) => e.callable && isComponentName(e.name),
-          );
+          const qualifying = (
+            localHandle ? moduleExports(localHandle.program, resolvedFile) : []
+          ).filter((e) => e.callable && isComponentName(e.name));
           if (!qualifying.some((e) => e.name === name)) {
             const s = suggest(name, qualifying.map((e) => e.name));
             out.push(

@@ -11,7 +11,12 @@ export type ExportInfo = {
   paramCount: number;
 };
 
-export type ProgramHandle = { program: ts.Program; checker: ts.TypeChecker };
+/**
+ * Return type of `createProgram`. Exported because `declaration: true` needs the name;
+ * it carries only the program — a `checker` field used to be built eagerly here on
+ * every call and read by nobody, since `moduleExports` gets its own from the program.
+ */
+export type ProgramHandle = { program: ts.Program };
 
 function readConfig(tsconfigPath: string): ts.ParsedCommandLine | null {
   const read = ts.readConfigFile(tsconfigPath, ts.sys.readFile);
@@ -27,8 +32,7 @@ export function createProgram(opts: {
   const parsed = readConfig(opts.tsconfigPath);
   if (!parsed) return null;
   const rootNames = [...new Set([...parsed.fileNames, ...opts.roots])].sort();
-  const program = ts.createProgram({ rootNames, options: parsed.options });
-  return { program, checker: program.getTypeChecker() };
+  return { program: ts.createProgram({ rootNames, options: parsed.options }) };
 }
 
 export function moduleExports(program: ts.Program, file: string): ExportInfo[] {
