@@ -41,4 +41,29 @@ describe("readCatalogs", () => {
     const { diagnostics } = readCatalogs(config(["../catalog/ui", "../catalog/ui"]), APP);
     expect(diagnostics.map((d) => d.code)).toContain("NOVA2010");
   });
+
+  it("reports exactly one collision when two different catalogs export the same name, keeping the first", () => {
+    const { catalog, diagnostics } = readCatalogs(
+      config(["../catalog/ui", "../catalog/extra"]),
+      APP,
+    );
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]!.code).toBe("NOVA2010");
+    expect(diagnostics[0]!.message).toContain("../catalog/ui");
+    expect(diagnostics[0]!.message).toContain("../catalog/extra");
+    expect(catalog.get("Table")!.module).toBe("../catalog/ui");
+    expect(catalog.names()).toContain("Banner");
+  });
+
+  it("reports an unreadable tsconfig instead of silently returning no diagnostics", () => {
+    const badConfig: NovaConfig = {
+      components: [],
+      states: { loading: "Loading", error: "ErrorNotice", empty: "EmptyState" },
+      outDir: "generated",
+      tsconfigPath: here("./fixtures/does-not-exist.json"),
+    };
+    const { diagnostics } = readCatalogs(badConfig, APP);
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]!.code).toBe("NOVA2011");
+  });
 });

@@ -56,6 +56,12 @@ export function readCatalogs(
         entries.set(exported.name, { name: exported.name, module, file });
       }
     }
+  } else {
+    diagnostics.push(
+      diagnostic("NOVA2011", `cannot read or parse tsconfig '${config.tsconfigPath}'`, at, {
+        hint: "check that tsconfigPath points to a valid, readable tsconfig.json",
+      }),
+    );
   }
 
   const catalog: Catalog = {
