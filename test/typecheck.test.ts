@@ -62,4 +62,35 @@ describe("typecheckEmitted", () => {
     const dir = scratch([f]);
     expect(typecheckEmitted({ files: [f], outDir: dir, tsconfigPath: TSCONFIG, positions })).toHaveLength(2);
   });
+
+  it("remaps a syntax error to the spec position that produced the line", () => {
+    const f = file("syntax-bad.ts", ["export const n: number = 1;", "}"], {
+      2: ["pages", "/", "sections", 0],
+    });
+    const dir = scratch([f]);
+    const out = typecheckEmitted({ files: [f], outDir: dir, tsconfigPath: TSCONFIG, positions });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.code).toBe("NOVA3001");
+    expect(out[0]!.file).toBe("app.yaml");
+    expect(out[0]!.line).toBe(42);
+    expect(out[0]!.related?.[0]?.file).toContain("syntax-bad.ts");
+  });
+
+  it("keeps the generated location for a syntax error with no spec origin", () => {
+    const f = file("syntax-orphan.ts", ["}"], {});
+    const dir = scratch([f]);
+    const out = typecheckEmitted({ files: [f], outDir: dir, tsconfigPath: TSCONFIG, positions });
+    expect(out).toHaveLength(1);
+    expect(out[0]!.code).toBe("NOVA3002");
+    expect(out[0]!.file).toContain("syntax-orphan.ts");
+    expect(out[0]!.line).toBe(1);
+  });
+
+  it("does not report diagnostics from files outside opts.files", () => {
+    const main = file("main.ts", ['import { h } from "./helper.js";', "export const n: number = h;"], {});
+    const dir = scratch([main]);
+    writeFileSync(join(dir, "helper.ts"), 'export const h: number = "nope";\n');
+    const out = typecheckEmitted({ files: [main], outDir: dir, tsconfigPath: TSCONFIG, positions });
+    expect(out).toEqual([]);
+  });
 });

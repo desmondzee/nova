@@ -5,6 +5,28 @@ import type { EmittedFile } from "./emit/types.js";
 import type { PositionMap } from "./load.js";
 import { createProgram } from "./program.js";
 
+/**
+ * Runs TypeScript over the emitted output and remaps anything it reports back to the
+ * spec line that produced it.
+ *
+ * Scope: only diagnostics on files listed in `opts.files` are reported. TypeScript's
+ * program may pull in other files while resolving imports — the author's own
+ * hand-written `data.ts`/`actions.ts`, or a host catalog component — and diagnostics on
+ * those are deliberately dropped. That code already goes through the author's own
+ * `tsc`, editor, and CI; duplicating it here would just be noise. The spec-to-code seam
+ * itself stays covered because `__contract.ts` binds each loader/action/compute to its
+ * derived type and is always one of the emitted files.
+ *
+ * Consequently, an empty result means the seam between the spec and the author's code
+ * is clean — it does NOT mean the overall build is clean.
+ *
+ * Both syntactic and semantic diagnostics are collected and treated identically: a
+ * diagnostic on a generated line with a spec origin becomes `NOVA3001` at that spec
+ * position; one with no origin keeps the generated location under `NOVA3002`. This
+ * covers not just type errors but malformed output — an unbalanced brace, a bad
+ * template edge case, an unescaped quote from a spec string literal — since TypeScript
+ * reporting a problem in emitted output is exactly what both codes mean.
+ */
 export function typecheckEmitted(opts: {
   files: EmittedFile[];
   outDir: string;
@@ -18,7 +40,12 @@ export function typecheckEmitted(opts: {
   const mapByPath = new Map(opts.files.map((f, i) => [paths[i]!, f.map]));
   const out: Diagnostic[] = [];
 
-  for (const d of handle.program.getSemanticDiagnostics()) {
+  const diagnostics = [
+    ...handle.program.getSyntacticDiagnostics(),
+    ...handle.program.getSemanticDiagnostics(),
+  ];
+
+  for (const d of diagnostics) {
     if (!d.file || d.start === undefined) continue;
     const map = mapByPath.get(d.file.fileName);
     if (!map) continue;
