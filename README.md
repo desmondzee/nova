@@ -104,6 +104,85 @@ export async function trips(input: { month: string }): Promise<Array<{ date: str
 }
 ```
 
+## Forms
+
+A section that carries `submit:` is a form. Its `fields:` each name a key of the
+action's input type, and that is checked by TypeScript rather than by nova:
+
+```yaml
+- Form:
+    submit: actions#saveTrip
+    confirm: Save this trip?
+    fields:
+      - DateField:   { name: date,    label: Date }
+      - NumberField: { name: km,      label: "Distance (km)", initial: 0 }
+      - TextField:   { name: purpose, label: Purpose }
+```
+
+```ts
+// actions.ts
+export interface TripInput { date: string; km: number; purpose: string }
+
+export async function saveTrip(input: TripInput):
+  Promise<{ ok: true } | { ok: false; fieldErrors: Record<string, string> }> { … }
+```
+
+The page holds the form in `useForm<SaveTripInput>`, where `SaveTripInput` is
+`Parameters<typeof actions.saveTrip>[0]` — the same derived-type approach loader inputs
+use. Each field emits `values["km"]`, `set("km", value)` and `errors["km"]` against it, so
+three things are compile errors at the spec line rather than runtime surprises:
+
+- **a field naming a key the action does not accept**, reported on that field's own line;
+- **a field whose value type does not match the key's** — a `NumberField` on a `string`
+  key — because `onChange`'s parameter type comes from the component and `set`'s from the
+  action;
+- **a form that does not cover every required key of the input**, reported on the
+  `- Form:` line, because the field list is what assembles `useForm`'s initial values. A
+  form is checked for completeness, not only for correctness.
+
+`initial:` on a field is its starting value, defaulting to `""`. A `NumberField` that does
+not say `initial: 0` gets a type error at the form, which is the right place to be told.
+
+Nova supplies `onSubmit`, `busy` and `error` to the form component and `value`, `onChange`
+and `error` to each field, so a catalog's field components must accept those. `name` and
+any other prop you write are forwarded as usual. A spec that also sets one of the supplied
+props is `NOVA1001` rather than a silent override.
+
+`fieldErrors` returned by the action land on the matching field automatically.
+
+## Confirmation, filter writes and sorting
+
+`confirm:` on a section guards the one action that section runs, whether through
+`submit:` or through an ordinary prop binding:
+
+```yaml
+- DeleteButton: { label: Delete, onSubmit: actions#deleteTrip, confirm: Delete this trip? }
+```
+
+It is consumed by nova rather than forwarded, so a delete button needs no `confirm` prop
+of its own. A page hoists one `useAction` per action, so two sections asking for different
+text on the same action is `NOVA1010`; a `confirm:` with no action to guard, or with more
+than one, is `NOVA1007`.
+
+`filters.month.set` is a filter reference in write mode. It emits
+`(value: string) => filters.set("month", value)`, which updates the query string and the
+page together:
+
+```yaml
+- FilterBar: { label: Month, value: filters.month, onChange: filters.month.set }
+```
+
+`sortable:` marks which of a section's columns the reader may sort by. Nova owns the sort
+state and its round trip through the URL — `?sort=` and `?dir=`, beside the filters — and
+hands the component `sort` and `onSort`; ordering the rows is the component's own job.
+
+```yaml
+- Table: { rows: data#trips, columns: [date, km], sortable: [date, km] }
+```
+
+A page holds one sort state, so a second sortable section is `NOVA1011`. A sortable column
+outside the section's own literal `columns:` list is `NOVA1009`.
+
 Components are resolved by name against the modules listed in `components`. A
 bare capitalised name must be exported by one of them; a name that isn't
 resolves to a build error listing what is available. Anything a spec can't
@@ -127,7 +206,12 @@ route param a page reads is narrowed into a local once at the top of the page fu
 Codes are stable.
 
 - `NOVA1xxx` — a problem in the spec file itself (YAML syntax, schema shape,
-  unknown or missing keys).
+  unknown or missing keys). `NOVA1007` is a `confirm:` with other than exactly
+  one action to guard; `NOVA1008` two fields editing the same key; `NOVA1009` a
+  sortable column the section's own `columns:` list does not have; `NOVA1010`
+  one page binding the same action in two ways nova cannot reconcile (two
+  different `confirm:` messages, or two forms on one action); `NOVA1011` more
+  than one sortable section on a page.
 - `NOVA2xxx` — name resolution: an unknown component, a missing catalog
   module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, a
   filter/route parameter reference that doesn't match its page, or one name
@@ -173,27 +257,22 @@ assigned back to, so it cannot catch a spec/code type mismatch (`pages.tsx`
 already does); it catches loader arity and a loader that isn't declared
 `async`, which `pages.tsx`'s JSX has no occasion to exercise.
 
-**Three pieces of runtime machinery are not wired up to anything a spec can
-say.** Each exists, is typechecked, and ships into a generated app that uses
-the hook it belongs to — but no spec syntax reaches it, so no generated page
-uses it today.
+**A form's starting values are literals, applied once.** `initial:` on a field
+takes a literal, so a form cannot be prefilled from a loader — an edit form
+that opens on an existing record is not yet expressible. `useForm` seeds its
+state on first render and does not re-seed, which is right for the entry forms
+the format targets and wrong for a form whose starting values arrive later.
 
-- **Filters are read-only from a spec.** `useFilters` returns
-  `{ ...values, set }` and maintains a `popstate` listener and a
-  `history.replaceState` setter, so a filter value survives a refresh. But
-  there is no binding form that *writes* one: `filters.month` is a read, and
-  nothing nova emits ever calls `filters.set(...)`. A generated page can
-  display a filter and feed it to a loader; it cannot change one. Until a
-  binding form for that exists, filters move only if something outside nova
-  edits the query string.
-- **`confirm:` is not implemented.** `useAction` accepts
-  `opts.confirm` and plumbs it through to `window.confirm`, but `validate`
-  has no `confirm:` key, so nothing in a spec can populate it, and
-  `useAction` is always emitted with one argument.
-- **`fieldErrors` is not bound into form fields.** `useAction`'s
-  `ActionState` carries `fieldErrors` (and `busy`, and `error`), but an
-  action reaches a component as exactly one thing — `.run`. No emitted form
-  wires a returned field error back onto its input.
+**A form cannot bind an optional key of the action's input.** `values["note"]`
+for `note?: string` is `string | undefined`, so a field component declaring
+`value: string` will not accept it. Either the field component accepts
+`undefined` or the action declares the key required.
+
+**One sort state and one form per action, per page.** Sort state lives under
+`?sort=`/`?dir=`, so a page holds exactly one (`NOVA1011`), and a form's local
+is named after its action, so one page cannot hold two forms on the same action
+(`NOVA1010`). Neither is a limit of the URL or of React — both are places where
+nova reports rather than guesses.
 
 **The empty state is validated but never rendered.** `states.empty` is
 required config and is checked against the catalog on every compile, but no

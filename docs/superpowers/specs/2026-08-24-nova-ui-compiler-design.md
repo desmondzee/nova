@@ -168,9 +168,14 @@ pages:
       - Table:
           rows: data#trips
           columns: [date, from, to, km, amount]
+          sortable: [date, km]
           empty: "No trips logged yet"
       - TravelForm:
           submit: actions#saveTravel
+          fields:
+            - DateField:   { name: date,    label: Date }
+            - NumberField: { name: km,      label: "Distance (km)", initial: 0 }
+            - TextField:   { name: purpose, label: Purpose }
 
   "/trip/:id":
     title: Trip
@@ -179,6 +184,7 @@ pages:
       - DeleteButton:
           label: Delete
           onSubmit: actions#deleteTrip
+          confirm: "Delete this trip?"
 ```
 
 **Two corrections to this example, made during implementation.** They are recorded
@@ -198,15 +204,23 @@ a silent no-op. `default` is an ordinary literal.
 reference (§6.1), so the original `- action: { label, fn, confirm }` block does not
 parse — `action` is lowercase and has no `#`, so it produces NOVA1004 "not a component
 reference". An action reaches the page as a component prop bound to `actions#name`, as
-shown above. `confirm:` has no home in the schema for the same reason and remains
-unimplemented; `useAction`'s runtime half supports it, but nothing in a spec can set it.
+shown above. `confirm:` is a key on that same section rather than a section of its own:
+
+```yaml
+- DeleteButton: { label: Delete, onSubmit: actions#deleteTrip, confirm: Delete this trip? }
+```
+
+It guards the one action the section runs, and is consumed by nova (it becomes
+`useAction`'s `opts.confirm`) rather than forwarded as a prop.
 
 Four things a page may contain:
 
 1. **A component reference** — a name resolved against the catalogs (§6.1).
-2. **A binding** — `data#x`, `actions#x`, `compute#x`, `params.id`, `filters.month`.
+2. **A binding** — `data#x`, `actions#x`, `compute#x`, `params.id`, `filters.month`
+   (read) or `filters.month.set` (write).
 3. **A literal** — anything else.
-4. **Nested children** — a component's children are the sections beneath it.
+4. **Nested children** — a component's children are the sections beneath it, and a
+   form's `fields:` are children that nova also wires to the form's state.
 
 ### Interactions the format owns
 
@@ -221,6 +235,24 @@ re-solved dozens of times, often inconsistently:
   this today; the rest lose filters on refresh).
 - **Out-of-order response guards** for loaders (3 of ~50 files do this today).
 - **Form field wiring** — value, change, per-field errors returned by the action.
+- **Sortable columns**, with the sort state in the URL beside the filters. Added
+  during implementation: 43 files hand-roll a table and the real ones sort. Nova
+  owns the state and its round trip only; ordering the rows stays the component's
+  business under D3, exactly as pagination does.
+
+**The shape the last four settled into.** A section that carries `submit: actions#x` is
+a form; its `fields:` each name a key of that action's input type. `filters.month.set` is
+a filter reference in write mode. `sortable: [date, km]` marks a section's sortable
+columns. Each of them is a key on an ordinary section rather than a new section kind, so
+§6.1's rule holds unchanged: a section's single key is still a component reference, and
+nova still ships no components.
+
+The load-bearing part is that none of the checking is nova's. `useForm<XInput>` is
+generic over `Parameters<typeof actions.x>[0]`, and each field emits `values["k"]`,
+`set("k", v)` and `errors["k"]` against it — so a field naming a key the action does not
+accept, a `NumberField` bound to a `string` key, and a form that fails to cover a required
+key are all ordinary TypeScript errors, remapped by §7.2 to the field's or the form's own
+line. This is D5 doing the work rather than a comparator nova maintains.
 
 ## 6. How names bind
 
@@ -296,6 +328,11 @@ export async function saveTravel(input: TravelInput):
 The compiler generates the `POST` handler entry, the client call, the busy state,
 the confirmation dialog if `confirm:` is set, and the mapping of returned
 `fieldErrors` onto form fields.
+
+A form additionally needs the action's *input* type, and gets it the same derived way:
+`export type SaveTravelInput = Parameters<typeof actions.saveTravel>[0]`, emitted only for
+an action a form submits. An action bound to a plain prop reaches its component as `.run`
+and never indexes into its input, so no `Input` alias is emitted for one.
 
 ### 6.4 Pure functions — `compute#formatKm`
 
