@@ -19,7 +19,19 @@ export type SectionSpec = {
   children: SectionSpec[];
 };
 
-export type FilterSpec = { name: string; type: string; default?: unknown };
+/**
+ * A page filter: a named value kept in the query string, with an optional starting
+ * value.
+ *
+ * There is deliberately no `type` here. It was required and read by nothing — no
+ * widget, no coercion, no validation — so `type: month` and `type: mnoth` behaved
+ * identically, and the README's own flagship example advertised month-awareness that
+ * did not exist. `default` is likewise an ordinary literal: `default: current` shipped
+ * the four-character string "current" to the loader, not the current month. Both are
+ * gone rather than half-implemented; a spec that still spells `type:` gets NOVA1001
+ * "unknown key" instead of a silent no-op.
+ */
+export type FilterSpec = { name: string; default?: unknown };
 
 export type PageSpec = {
   route: string;

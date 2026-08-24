@@ -161,7 +161,7 @@ pages:
   "/":
     title: Mileage & Per Diem
     filters:
-      month: { type: month, default: current }
+      month: { default: "2026-08" }
     sections:
       - TabNav: { active: overview }
       - StatCard: { label: "This month", value: data#monthlyTotal }
@@ -176,11 +176,30 @@ pages:
     title: Trip
     sections:
       - Row: { label: "Distance", value: data#trip.km, numeric: true }
-      - action:
+      - DeleteButton:
           label: Delete
-          fn: actions#deleteTrip
-          confirm: "Delete this trip?"
+          onSubmit: actions#deleteTrip
 ```
+
+**Two corrections to this example, made during implementation.** They are recorded
+here rather than silently left in place, because a reader who copies this block is
+entitled to have it work.
+
+A filter is a **name and an optional `default`**, and nothing else. The original
+example showed `month: { type: month, default: current }`, which reads as if `type`
+selected a month widget and `current` resolved to the current month. Neither happened:
+`type` was required and read by no part of the compiler — `month`, `select` and a typo
+like `mnoth` all behaved identically — and `default: current` shipped the literal
+four-character string `"current"` to the loader. Both were removed rather than
+half-built; a spec that still spells `type:` now gets NOVA1001 "unknown key" instead of
+a silent no-op. `default` is an ordinary literal.
+
+**There is no `- action:` section form.** A section's single key is a component
+reference (§6.1), so the original `- action: { label, fn, confirm }` block does not
+parse — `action` is lowercase and has no `#`, so it produces NOVA1004 "not a component
+reference". An action reaches the page as a component prop bound to `actions#name`, as
+shown above. `confirm:` has no home in the schema for the same reason and remains
+unimplemented; `useAction`'s runtime half supports it, but nothing in a spec can set it.
 
 Four things a page may contain:
 

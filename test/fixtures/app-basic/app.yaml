@@ -2,7 +2,7 @@ pages:
   "/":
     title: Trips
     filters:
-      month: { type: month, default: current }
+      month: { default: "2026-08" }
     sections:
       - StatCard: { label: This month, value: data#monthlyTotal }
       - Table:

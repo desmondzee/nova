@@ -114,6 +114,27 @@ describe("emitPages", () => {
     expect(text).toContain("rows={trips.value}");
   });
 
+  it("emits each page's title into a titles map rather than discarding it", () => {
+    // `title:` was validated, stored on PageSpec and then read by no emitter at all.
+    // Nova ships no shell component to render it into (states names only
+    // loading/error/empty), so it is emitted as a map the host mounts — the same
+    // contract as `pages` and `handlers`.
+    const { text } = emitPages(resolved(), config);
+    expect(text).toContain("export const titles: Record<string, string> = {");
+    expect(text).toContain('"/": "Trips",');
+    expect(text).toContain('"/trip/:id": "Trip",');
+  });
+
+  it("emits an empty titles map when no page declares a title", () => {
+    const app = resolved();
+    const untitled = {
+      ...app,
+      spec: { pages: app.spec.pages.map(({ title: _title, ...rest }) => rest) },
+    };
+    const { text } = emitPages(untitled, config);
+    expect(text).toContain("export const titles: Record<string, string> = {\n};");
+  });
+
   it("maps a generated line back to the section that produced it", () => {
     const { text, map } = emitPages(resolved(), config);
     const lineNo = text.split("\n").findIndex((l) => l.includes("<Table")) + 1;

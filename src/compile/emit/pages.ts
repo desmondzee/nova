@@ -166,6 +166,27 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
   });
   e.dedent();
   e.line("};");
+  e.line();
+
+  // `title:` is a page-level fact with no page-level place to render it: nova ships no
+  // components (§2) and `states` names only loading/error/empty, so there is no shell
+  // component to hand it to and inventing one would mean new required config for a
+  // component every consumer would have to write. It is emitted as a map instead —
+  // the same shape, and the same contract, as `pages` and `handlers`: nova emits it,
+  // the host mounts it wherever its own layout puts a title. Always emitted, even when
+  // empty, so the module's exports do not change shape with the spec.
+  e.line(`export const titles: ${TITLES_TYPE} = {`);
+  e.indent();
+  for (const page of app.spec.pages) {
+    if (page.title === undefined) continue;
+    e.line(`${JSON.stringify(page.route)}: ${JSON.stringify(page.title)},`, [
+      "pages",
+      page.route,
+      "title",
+    ]);
+  }
+  e.dedent();
+  e.line("};");
 
   return { name: "pages.tsx", text: e.text(), map: e.map() };
 

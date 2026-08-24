@@ -12,7 +12,7 @@ const GOOD = [
   '  "/":',
   "    title: Mileage",
   "    filters:",
-  "      month: { type: month, default: current }",
+  '      month: { default: "2026-08" }',
   "    sections:",
   "      - StatCard: { label: This month, value: data#monthlyTotal }",
   "      - Table:",
@@ -29,7 +29,7 @@ describe("validate", () => {
     const page = spec!.pages[0]!;
     expect(page.route).toBe("/");
     expect(page.title).toBe("Mileage");
-    expect(page.filters).toEqual([{ name: "month", type: "month", default: "current" }]);
+    expect(page.filters).toEqual([{ name: "month", default: "2026-08" }]);
     expect(page.sections).toHaveLength(2);
     expect(page.sections[0]!.component).toEqual({ kind: "catalog", name: "StatCard" });
     expect(page.sections[0]!.props.label).toEqual({ kind: "literal", value: "This month" });
@@ -79,9 +79,27 @@ describe("validate", () => {
     expect(diagnostics.map((d) => d.code)).toContain("NOVA1005");
   });
 
+  it("accepts a filter with no keys at all", () => {
+    // `type` used to be required and was then read by nothing, so every spec carried a
+    // key that changed no output. A filter is now just a name plus an optional default.
+    const { spec, diagnostics } = check(
+      'pages:\n  "/":\n    filters:\n      month: {}\n    sections: []\n',
+    );
+    expect(diagnostics).toEqual([]);
+    expect(spec!.pages[0]!.filters).toEqual([{ name: "month" }]);
+  });
+
+  it("reports a leftover 'type' key rather than silently ignoring it", () => {
+    const { diagnostics } = check(
+      'pages:\n  "/":\n    filters:\n      month: { type: month }\n    sections: []\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1001"]);
+    expect(diagnostics[0]!.message).toContain("'type'");
+  });
+
   it("rejects a filter named 'set', which would collide with useFilters' setter", () => {
     const { diagnostics } = check(
-      'pages:\n  "/":\n    filters:\n      set: { type: month }\n    sections: []\n',
+      'pages:\n  "/":\n    filters:\n      set: {}\n    sections: []\n',
     );
     expect(diagnostics.map((d) => d.code)).toContain("NOVA1001");
     expect(diagnostics.find((d) => d.code === "NOVA1001")!.message).toContain("reserved");

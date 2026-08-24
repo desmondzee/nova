@@ -73,13 +73,23 @@ apps/trips/
 └── generated/     emitted: pages.tsx, handlers.ts, types.ts, runtime.tsx, __contract.ts
 ```
 
+`pages.tsx` exports two maps: `pages`, keyed by route, and `titles`, carrying each
+page's `title:`. Nova ships no shell component and `states` names only the loading,
+error and empty components, so there is nowhere in a generated page for a title to go —
+the host mounts `titles` wherever its own layout puts one, exactly as it mounts `pages`.
+
+A filter is a name and an optional `default`. The value is kept in the query string, so
+a refresh preserves it, and it feeds the input object of every loader on the page.
+`default` is a plain literal: there is no widget vocabulary and no computed sentinel, so
+`default: current` would ship the string `"current"` rather than the current month.
+
 ```yaml
 # app.yaml
 pages:
   "/":
     title: Trips
     filters:
-      month: { type: month, default: current }
+      month: { default: "2026-08" }
     sections:
       - Table:
           rows: data#trips
@@ -94,6 +104,12 @@ export async function trips(input: { month: string }): Promise<Array<{ date: str
 }
 ```
 
+Components are resolved by name against the modules listed in `components`. A
+bare capitalised name must be exported by one of them; a name that isn't
+resolves to a build error listing what is available. Anything a spec can't
+express is referenced by path instead — `./views/charts#BridgeChart` — and still
+gets its props typechecked.
+
 ## Loader inputs
 
 A loader's input object is assembled from the page's route params and its filter
@@ -105,12 +121,6 @@ runtime. Where a route param and a filter share a name, the route param wins.
 Generated code is safe under `noUncheckedIndexedAccess`. Filter values are keyed by
 the filter names the page declares rather than by an open index signature, and each
 route param a page reads is narrowed into a local once at the top of the page function.
-
-Components are resolved by name against the modules listed in `components`. A
-bare capitalised name must be exported by one of them; a name that isn't
-resolves to a build error listing what is available. Anything a spec can't
-express is referenced by path instead — `./views/charts#BridgeChart` — and still
-gets its props typechecked.
 
 ## Diagnostics
 

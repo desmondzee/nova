@@ -16,7 +16,7 @@ import {
 } from "./types.js";
 
 const PAGE_KEYS = ["title", "filters", "sections"];
-const FILTER_KEYS = ["type", "default"];
+const FILTER_KEYS = ["default"];
 const ROUTE = /^\/$|^(?:\/(?:[A-Za-z0-9\-_]+|:[A-Za-z_$][A-Za-z0-9_$]*))+$/;
 
 // Iteration order below is intentionally inconsistent: loops that build the emitted AppSpec
@@ -136,10 +136,6 @@ export function validate(
           report("NOVA1001", `unknown key '${key}'`, [...path, name, key], hintFor(key, FILTER_KEYS));
         }
       }
-      if (typeof raw.type !== "string") {
-        report("NOVA1002", `filter '${name}' is missing required key 'type'`, [...path, name]);
-        continue;
-      }
       // useFilters returns { ...values, set }, so a filter literally named 'set' would
       // collide with the setter at runtime — reuse the "unknown key" code since this is
       // the same class of problem: a name that cannot be used in this position.
@@ -151,7 +147,7 @@ export function validate(
         );
         continue;
       }
-      const filter: FilterSpec = { name, type: raw.type };
+      const filter: FilterSpec = { name };
       if (raw.default !== undefined) filter.default = raw.default;
       filters.push(filter);
     }
