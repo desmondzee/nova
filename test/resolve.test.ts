@@ -188,6 +188,39 @@ describe("resolveApp", () => {
     expect(resolved).toBeNull();
   });
 
+  it("reports a loader and an action that share a name, before anything is emitted", () => {
+    // types.ts derives `export type Sync` from whichever namespace the name lives in,
+    // and __contract.ts binds `const _sync` — so one name in two namespaces emits each
+    // of those twice. TypeScript then reported "Cannot redeclare block-scoped variable
+    // '_sync'" as a NOVA3001 against the author's spec line: a nova bug blamed on the
+    // spec. NOVA2009 is the existing "one name, two bindings — rename one" code.
+    const specFile = here("./fixtures/app-name-collision/app.yaml");
+    const appDir = dirname(specFile);
+    const collisionConfig: NovaConfig = {
+      ...config,
+      components: ["../catalog/ui", "../catalog/forms"],
+    };
+    const source = readFileSync(specFile, "utf8");
+    const { raw, positions } = loadSpecFile(specFile, source);
+    const { spec } = validate(raw, positions);
+    const { catalog } = readCatalogs(collisionConfig, specFile);
+    const { resolved, diagnostics } = resolveApp(spec!, {
+      config: collisionConfig,
+      appDir,
+      specFile,
+      catalog,
+      positions,
+    });
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2009"]);
+    expect(diagnostics[0]!.message).toContain("'sync'");
+    expect(diagnostics[0]!.message).toContain("a data loader");
+    expect(diagnostics[0]!.message).toContain("an action");
+    // At the binding that named it, not the document root.
+    expect(diagnostics[0]!.line).toBe(6);
+    // Fatal: nothing is emitted, so the duplicate identifiers never reach TypeScript.
+    expect(resolved).toBeNull();
+  });
+
   it("prefers .ts exports over .tsx exports for the same base name", () => {
     const specFile = here("./fixtures/app-tiebreak/app.yaml");
     const appDir = dirname(specFile);

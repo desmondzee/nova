@@ -1,0 +1,7 @@
+pages:
+  "/":
+    filters:
+      month: { default: "2026-08" }
+    sections:
+      - StatCard: { label: Sync, value: data#sync }
+      - ActionButton: { label: Sync, onSubmit: actions#sync }

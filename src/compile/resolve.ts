@@ -94,6 +94,7 @@ export function resolveApp(
   const loaderArity: Record<string, number> = {};
   const loaderOrigins: Record<string, SpecPath> = {};
   const actionOrigins: Record<string, SpecPath> = {};
+  const computeOrigins: Record<string, SpecPath> = {};
 
   const exportsByBase = exportsOf(ctx.appDir, ctx.config.tsconfigPath);
   const dataExports = exportsByBase.get("data") ?? new Map<string, ExportInfo>();
@@ -162,6 +163,36 @@ export function resolveApp(
     );
     const filterNames = new Set(page.filters.map((f) => f.name));
     walk(page.sections, page, routeParams, filterNames, ["pages", page.route, "sections"]);
+  }
+
+  // One name may not mean two things. `types.ts` derives `export type ${Cap}` from the
+  // namespace a name lives in, and `__contract.ts` binds `const _${name}`, so a loader
+  // and an action both called `sync` emit each of those twice. TypeScript then reports
+  // "Cannot redeclare block-scoped variable '_sync'" against the author's spec line — a
+  // nova bug wearing a spec error's clothes. Caught here instead, at resolve time,
+  // before anything is emitted. NOVA2009 is the existing code for exactly this shape of
+  // problem ("one name is bound to two different things — rename one"); it previously
+  // only covered components.
+  const NAMESPACES = [
+    ["a data loader", loaders, loaderOrigins],
+    ["an action", actions, actionOrigins],
+    ["a compute function", computes, computeOrigins],
+  ] as const;
+  for (let i = 0; i < NAMESPACES.length; i++) {
+    for (let j = i + 1; j < NAMESPACES.length; j++) {
+      const [firstLabel, firstNames, firstOrigins] = NAMESPACES[i]!;
+      const [secondLabel, secondNames, secondOrigins] = NAMESPACES[j]!;
+      for (const name of sorted(firstNames)) {
+        if (!secondNames.has(name)) continue;
+        out.push(
+          diagnostic(
+            "NOVA2009",
+            `'${name}' is bound as both ${firstLabel} and ${secondLabel} — rename one`,
+            ctx.positions.at(firstOrigins[name] ?? secondOrigins[name] ?? []),
+          ),
+        );
+      }
+    }
   }
 
   // A bad `states` config should fail loudly regardless of whether a given spec ends up
@@ -298,7 +329,10 @@ export function resolveApp(
         } else if (ref.kind === "compute") {
           if (!computeExports.has(ref.name)) {
             report("NOVA2004", `compute.ts has no export '${ref.name}'`, propAt, computeExports, ref.name);
-          } else computes.add(ref.name);
+          } else {
+            computes.add(ref.name);
+            if (computeOrigins[ref.name] === undefined) computeOrigins[ref.name] = [...at, propName];
+          }
         } else if (ref.kind === "param") {
           if (!routeParams.has(ref.name)) {
             out.push(

@@ -129,8 +129,10 @@ Codes are stable.
 - `NOVA1xxx` — a problem in the spec file itself (YAML syntax, schema shape,
   unknown or missing keys).
 - `NOVA2xxx` — name resolution: an unknown component, a missing catalog
-  module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, or
-  a filter/route parameter reference that doesn't match its page.
+  module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, a
+  filter/route parameter reference that doesn't match its page, or one name
+  bound to two different things (`NOVA2009` — two components, or a loader and
+  an action sharing a name).
 - `NOVA3xxx` — a problem TypeScript found in the emitted output. `NOVA3001` is
   remapped back to the YAML line that produced it; `NOVA3002` is reported at
   the generated location instead, because it has no traceable spec origin —
