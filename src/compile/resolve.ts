@@ -4,7 +4,18 @@ import type { AppSpec, PageSpec, SectionSpec } from "../schema/types.js";
 import type { Catalog } from "./catalog.js";
 import type { NovaConfig } from "./config.js";
 import type { PositionMap } from "./load.js";
-import { createProgram, moduleExports } from "./program.js";
+import { createProgram, moduleExports, resolveModule } from "./program.js";
+
+// Same admission rule catalogs use: only capitalised, callable exports count as
+// usable components.
+const isComponentName = (name: string) => /^[A-Z]/.test(name);
+
+function collectLocalModules(sections: SectionSpec[], into: Set<string>): void {
+  for (const section of sections) {
+    if (section.component.kind === "local") into.add(section.component.module);
+    collectLocalModules(section.children, into);
+  }
+}
 
 export type ModuleBinding = { name: string; module: string };
 
@@ -80,6 +91,41 @@ export function resolveApp(
   const actionExports = exportsByBase.get("actions") ?? new Set<string>();
   const computeExports = exportsByBase.get("compute") ?? new Set<string>();
 
+  // Resolve every distinct local component module referenced by the spec once,
+  // and cover them all with a single additional program (never one program per
+  // reference, and never one per usage of the same module).
+  const localModuleSpecifiers = new Set<string>();
+  for (const page of spec.pages) collectLocalModules(page.sections, localModuleSpecifiers);
+
+  const localModuleFiles = new Map<string, string | null>();
+  for (const specifier of localModuleSpecifiers) {
+    localModuleFiles.set(specifier, resolveModule(specifier, ctx.specFile, ctx.config.tsconfigPath));
+  }
+  const localRoots = [...localModuleFiles.values()].filter((f): f is string => f !== null);
+  const localHandle =
+    localRoots.length > 0 ? createProgram({ tsconfigPath: ctx.config.tsconfigPath, roots: localRoots }) : null;
+
+  function localExportsOf(file: string) {
+    return localHandle ? moduleExports(localHandle.program, file) : [];
+  }
+
+  function addComponent(name: string, module: string, at: { file: string; line: number; col: number }): void {
+    const existing = components.get(name);
+    if (existing) {
+      if (existing.module !== module) {
+        out.push(
+          diagnostic(
+            "NOVA2009",
+            `component '${name}' is bound to both '${existing.module}' and '${module}' — rename one`,
+            at,
+          ),
+        );
+      }
+      return;
+    }
+    components.set(name, { name, module });
+  }
+
   for (const page of spec.pages) {
     const routeParams = new Set(
       page.route
@@ -105,7 +151,7 @@ export function resolveApp(
       );
       continue;
     }
-    components.set(name, { name, module: entry.module });
+    addComponent(name, entry.module, ctx.positions.at([]));
   }
 
   const fatal = out.some((d) => d.severity === "error");
@@ -114,7 +160,9 @@ export function resolveApp(
       ? null
       : {
           spec,
-          components: [...components.values()].sort((a, b) => (a.name < b.name ? -1 : 1)),
+          components: [...components.values()].sort((a, b) =>
+            a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+          ),
           loaders: sorted(loaders),
           actions: sorted(actions),
           computes: sorted(computes),
@@ -145,13 +193,37 @@ export function resolveApp(
             }),
           );
         } else {
-          components.set(name, { name, module: entry.module });
+          addComponent(name, entry.module, ctx.positions.at(at));
         }
       } else {
-        components.set(`${section.component.module}#${section.component.name}`, {
-          name: section.component.name,
-          module: section.component.module,
-        });
+        const { module, name } = section.component;
+        const resolvedFile = localModuleFiles.get(module) ?? null;
+        if (resolvedFile === null) {
+          out.push(
+            diagnostic(
+              "NOVA2007",
+              `local component module '${module}' cannot be resolved`,
+              ctx.positions.at(at),
+            ),
+          );
+        } else {
+          const qualifying = localExportsOf(resolvedFile).filter(
+            (e) => e.callable && isComponentName(e.name),
+          );
+          if (!qualifying.some((e) => e.name === name)) {
+            const s = suggest(name, qualifying.map((e) => e.name));
+            out.push(
+              diagnostic(
+                "NOVA2008",
+                `module '${module}' has no component export '${name}'`,
+                ctx.positions.at(at),
+                s === undefined ? {} : { hint: `did you mean '${s}'?` },
+              ),
+            );
+          } else {
+            addComponent(name, module, ctx.positions.at(at));
+          }
+        }
       }
 
       for (const propName of Object.keys(section.props).sort()) {

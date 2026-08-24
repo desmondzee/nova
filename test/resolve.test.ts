@@ -84,4 +84,65 @@ describe("resolveApp", () => {
     );
     expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2006"]);
   });
+
+  it("reports an unknown actions export", () => {
+    const { diagnostics } = run(
+      'pages:\n  "/":\n    sections:\n      - StatCard: { label: a, value: actions#nope }\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2003"]);
+  });
+
+  it("reports an unknown compute export", () => {
+    const { diagnostics } = run(
+      'pages:\n  "/":\n    sections:\n      - StatCard: { label: a, value: compute#nope }\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2004"]);
+  });
+
+  it("resolves a local component whose module and export both exist", () => {
+    const { resolved, diagnostics } = run(
+      'pages:\n  "/":\n    sections:\n      - "./collide#Table": {}\n',
+    );
+    expect(diagnostics).toEqual([]);
+    expect(resolved!.components).toContainEqual({ name: "Table", module: "./collide" });
+  });
+
+  it("reports a local component whose module cannot be resolved", () => {
+    const { diagnostics } = run(
+      'pages:\n  "/":\n    sections:\n      - "./nonexistent#Widget": {}\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2007"]);
+  });
+
+  it("reports a local component export that does not exist in a module that does", () => {
+    const { diagnostics } = run(
+      'pages:\n  "/":\n    sections:\n      - "./collide#Nope": {}\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2008"]);
+  });
+
+  it("reports exactly one collision when a catalog and a local component share a name", () => {
+    const { diagnostics } = run(
+      'pages:\n  "/":\n    sections:\n      - Table: {}\n      - "./collide#Table": {}\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA2009"]);
+  });
+
+  it("prefers .ts exports over .tsx exports for the same base name", () => {
+    const specFile = here("./fixtures/app-tiebreak/app.yaml");
+    const appDir = dirname(specFile);
+    const source = readFileSync(specFile, "utf8");
+    const { raw, positions } = loadSpecFile(specFile, source);
+    const { spec } = validate(raw, positions);
+    const { catalog } = readCatalogs(config, specFile);
+    const { resolved, diagnostics } = resolveApp(spec!, {
+      config,
+      appDir,
+      specFile,
+      catalog,
+      positions,
+    });
+    expect(diagnostics).toEqual([]);
+    expect(resolved!.loaders).toEqual(["fromTs"]);
+  });
 });

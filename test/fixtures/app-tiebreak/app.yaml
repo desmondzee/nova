@@ -1,0 +1,4 @@
+pages:
+  "/":
+    sections:
+      - StatCard: { label: a, value: data#fromTs }
