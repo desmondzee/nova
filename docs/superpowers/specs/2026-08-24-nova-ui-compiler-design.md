@@ -228,7 +228,12 @@ These are declared, not written, because the survey in §1 shows them being
 re-solved dozens of times, often inconsistently:
 
 - **Loading and error states** for every `data#` binding (54 files today).
-- **Empty states** (44 files today).
+- **Empty states** (44 files today) — surveyed here, but *not* taken: a section
+  knows whether its own rows are empty and nova does not, so this one stayed with
+  the component (`states.empty` is optional config, checked and never rendered).
+- **Re-reading what an action invalidated** (`refreshes: [trips]` on the section
+  that runs the action). Added during implementation: every create-then-list app
+  has the shape, and without it a saved row does not appear until a manual reload.
 - **Confirmation before a destructive action** (`confirm:` on an action —
   39 `window.confirm` calls today).
 - **Filter state, including its round trip through the URL** (6 of 38 apps do
@@ -435,7 +440,28 @@ Incrementality is a hash of (spec + catalog versions + compiler version) written
 into the emitted header. Worth having because the typecheck stage boots a
 `ts.Program`.
 
-### 7.5 Diagnostics
+### 7.5 The emitted output is two modules, and one of them is not the client's
+
+Under React Server Components a server module that imports a `"use client"` module
+receives *client references* rather than values, so a route map exported from the
+client half reads back as `{}` — the host matches no route and 404s silently. The
+page components therefore live in `views.tsx` (`"use client"`) and the `pages` /
+`titles` maps in `pages.tsx`, which carries no directive and imports the components
+by name. That is the same split a hand-written app in such a host already uses.
+
+Two consequences of the same fact, both of which cost a running app before they were
+understood:
+
+- **A client component is still server-rendered on first paint.** The runtime's
+  hooks therefore seed their state from the spec's declared defaults and reconcile
+  with `window.location` inside their effect, which runs only on the client.
+  Reading a browser global in a `useState` initialiser is a 500, not a hydration
+  warning.
+- **The client half has to know where the app is mounted.** `basePath` prefixes the
+  URLs the generated client fetches. The *keys* of `handlers` do not move with it:
+  they are matched against the path remaining after the host's own mount.
+
+### 7.6 Diagnostics
 
 Flat `{ code, severity, message, file, line, col, hint?, related? }` with stable
 codes (`NOVA1001`). Stable codes let the testkit assert on failures without
@@ -499,7 +525,7 @@ apps/german-mileage/
 ├── voucher.ts         unchanged
 ├── handlers.ts        what the spec does not cover
 ├── migrations/        unchanged
-└── generated/         pages.tsx, handlers.ts, types.ts, __contract.ts
+└── generated/         pages.tsx, views.tsx, handlers.ts, types.ts, runtime.tsx, __contract.ts
 ```
 
 This app is deliberately not the easy case. It has geocoding autocomplete against

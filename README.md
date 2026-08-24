@@ -47,9 +47,10 @@ import { compileApp } from "@light/nova/compile";
 
 const result = await compileApp("apps/trips", {
   components: ["@acme/ui"],
-  states: { loading: "Loading", error: "ErrorNotice", empty: "EmptyState" },
+  states: { loading: "Loading", error: "ErrorNotice" },
   outDir: "generated",
   tsconfigPath: "tsconfig.json",
+  basePath: "/api/apps/trips",
 });
 
 for (const d of result.diagnostics) {
@@ -62,6 +63,17 @@ Nova never reads config from disk — you pass the value, so you can keep it in
 whatever form your build already uses. `components`, `states`, `outDir` and
 `tsconfigPath` are all required; `importExtension` is optional and defaults to
 bundler-style resolution (no extension appended to relative imports).
+
+`basePath` is optional and defaults to `""`. It is the path your host mounts this
+app's handler map at, and it prefixes the URLs the generated client fetches:
+`"/api/apps/trips"` turns `fetch("/_data/trips")` into
+`fetch("/api/apps/trips/_data/trips")`. The **keys of `handlers`** deliberately do
+not move with it — they are matched against the remainder of the path *after* your
+mount, so prefixing both halves would double the prefix. Leave `basePath` unset for
+a host that serves apps from the site root.
+
+`states.loading` and `states.error` are required and `states.empty` is optional; see
+[what nova renders itself](#what-nova-renders-itself).
 
 ### Compiling more than one app
 
@@ -94,13 +106,21 @@ apps/trips/
 ├── app.yaml       the spec
 ├── data.ts        typed async loaders
 ├── actions.ts     typed mutations
-└── generated/     emitted: pages.tsx, handlers.ts, types.ts, runtime.tsx, __contract.ts
+└── generated/     emitted: pages.tsx, views.tsx, handlers.ts, types.ts, runtime.tsx, __contract.ts
 ```
 
 `pages.tsx` exports two maps: `pages`, keyed by route, and `titles`, carrying each
-page's `title:`. Nova ships no shell component and `states` names only the loading,
-error and empty components, so there is nowhere in a generated page for a title to go —
+page's `title:`. Nova ships no shell component and `states` names only the loading and
+error components, so there is nowhere in a generated page for a title to go —
 the host mounts `titles` wherever its own layout puts one, exactly as it mounts `pages`.
+
+`pages.tsx` and `views.tsx` are one module split in two, and the split is load-bearing
+under React Server Components. `views.tsx` carries `"use client"` and exports one
+component per route (`Page_0`, `Page_1`, …); `pages.tsx` carries **no** directive and
+imports them. A server module that imports a `"use client"` module receives *client
+references* rather than values, so a route map exported from the client half reads back
+as `{}` — the host matches no route and 404s with nothing to show for it. Mount `pages`
+and `titles` from `pages.tsx`; nothing needs to import `views.tsx` directly.
 
 A filter is a name and an optional `default`. The value is kept in the query string, so
 a refresh preserves it, and it feeds the input object of every loader on the page.
@@ -168,9 +188,10 @@ three things are compile errors at the spec line rather than runtime surprises:
 not say `initial: 0` gets a type error at the form, which is the right place to be told.
 
 Nova supplies `onSubmit`, `busy` and `error` to the form component and `value`, `onChange`
-and `error` to each field, so a catalog's field components must accept those. `name` and
-any other prop you write are forwarded as usual. A spec that also sets one of the supplied
-props is `NOVA1001` rather than a silent override.
+and `error` to each field, so a catalog's field components must accept those — the exact
+shapes are in [what nova renders itself](#what-nova-renders-itself). `name` and any other
+prop you write are forwarded as usual. A spec that also sets one of the supplied props is
+`NOVA1001` rather than a silent override.
 
 `fieldErrors` returned by the action land on the matching field automatically.
 
@@ -207,11 +228,51 @@ hands the component `sort` and `onSort`; ordering the rows is the component's ow
 A page holds one sort state, so a second sortable section is `NOVA1011`. A sortable column
 outside the section's own literal `columns:` list is `NOVA1009`.
 
+`refreshes:` names the loaders a successful action invalidates, so the saved row appears
+without a reload:
+
+```yaml
+- Form: { submit: actions#saveTrip, refreshes: [trips], fields: [ … ] }
+```
+
+Each name is resolved against the loaders that page's own sections bind, so
+`refreshes: [tirps]` is `NOVA1012` at that line rather than a page that silently never
+refreshes. It attaches to the one action the section runs — `NOVA1007` if there is not
+exactly one, exactly as `confirm:` — and runs only when the action reports `ok: true`; an
+action that came back with `fieldErrors` changed nothing. There is no cache and no key
+space behind it: it calls `reload()` on each named loader, and the loader re-requests.
+
 Components are resolved by name against the modules listed in `components`. A
 bare capitalised name must be exported by one of them; a name that isn't
 resolves to a build error listing what is available. Anything a spec can't
 express is referenced by path instead — `./views/charts#BridgeChart` — and still
 gets its props typechecked.
+
+## What nova renders itself
+
+Every component in a generated page is yours, but a few of them nova constructs rather
+than forwards a spec's props to, so their shapes are a contract. A component that does
+not match is a `NOVA3001` on every use, which is a poor way to discover it.
+
+| Where | What nova writes | What your component must declare |
+| --- | --- | --- |
+| `states.loading` | `<Loading />` | every prop optional — it is given none at all |
+| `states.error` | `<ErrorNotice>{message}</ErrorNotice>` | `children` — the message is not a prop |
+| a form shell (`submit:`) | `busy`, `error`, `onSubmit`, its fields as children | `busy: boolean`, `error: string \| null`, `onSubmit: () => Promise<boolean>`, `children` |
+| a field (`fields:`) | `value`, `onChange`, `error`, **and `name`** | `name: string`, `value`/`onChange` at that input key's own type, `error?: string` |
+| a sortable section (`sortable:`) | `sort`, `onSort`, and `sortable` itself | `sort: { column: string; direction: "asc" \| "desc" } \| null`, `onSort: (column: string) => void`, `sortable: string[]` |
+
+A field's `name` is both the wiring and an ordinary prop: nova uses it as the key of the
+action's input **and** forwards it, because a field almost always wants it for its
+label's `htmlFor`. That is deliberate, so declare `name: string` on every field
+component. The keys nova consumes and does *not* forward are `initial:`, `confirm:` and
+`refreshes:`.
+
+`states.empty` is optional and no generated page renders it. A section knows whether its
+own rows are empty and nova does not, so the empty state belongs to your table — as an
+ordinary `empty:` prop of it. Where `states.empty` is given it is still resolved against
+the catalog, so a name that does not exist is still a build error; that is the whole of
+what it does.
 
 ## Loader inputs
 
@@ -230,12 +291,15 @@ route param a page reads is narrowed into a local once at the top of the page fu
 Codes are stable.
 
 - `NOVA1xxx` — a problem in the spec file itself (YAML syntax, schema shape,
-  unknown or missing keys). `NOVA1007` is a `confirm:` with other than exactly
-  one action to guard; `NOVA1008` two fields editing the same key; `NOVA1009` a
-  sortable column the section's own `columns:` list does not have; `NOVA1010`
-  one page binding the same action in two ways nova cannot reconcile (two
-  different `confirm:` messages, or two forms on one action); `NOVA1011` more
-  than one sortable section on a page.
+  unknown or missing keys). `NOVA1007` is a `confirm:` or `refreshes:` with other
+  than exactly one action to attach to; `NOVA1008` two fields editing the same key;
+  `NOVA1009` a sortable column the section's own `columns:` list does not have;
+  `NOVA1010` one page binding the same action in two ways nova cannot reconcile
+  (two different `confirm:` messages or `refreshes:` lists, or two forms on one
+  action); `NOVA1011` more than one sortable section on a page; `NOVA1012` a
+  `refreshes:` naming a loader that page's own sections do not bind — the next
+  free number in the block, and a spec-file problem like the rest of it, since it
+  is answered from the page's own text with no catalog or type information.
 - `NOVA2xxx` — name resolution: an unknown component, a missing catalog
   module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, a
   filter/route parameter reference that doesn't match its page, or one name
@@ -307,11 +371,6 @@ is named after its action, so one page cannot hold two forms on the same action
 (`NOVA1010`). Neither is a limit of the URL or of React — both are places where
 nova reports rather than guesses.
 
-**The empty state is validated but never rendered.** `states.empty` is
-required config and is checked against the catalog on every compile, but no
-generated page renders it, even when a loader's result is empty. The
-loading and error states are rendered; the empty one is not.
-
 **Loading is inferred from `value === null`, not from `state.loading`.** A
 page shows its loading component while any of its loaders has a null value.
 A loader that legitimately resolves to `null` — `Promise<Trip | null>`, an
@@ -332,7 +391,7 @@ matters.
 
 **The input hash does not cover source file contents.** The stamp written
 into each emitted file's header covers the spec source, the whole config
-value (so a change to `states`, `outDir`, `importExtension` or
+value (so a change to `states`, `outDir`, `importExtension`, `basePath` or
 `tsconfigPath` changes the stamp too) and the compiler version. It does not
 cover the contents of `data.ts`, `actions.ts`, `compute.ts`, or any catalog or
 local component file, so it is not yet sufficient on its own to safely skip
