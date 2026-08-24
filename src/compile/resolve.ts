@@ -1,17 +1,12 @@
 import { extname, join, relative, sep } from "node:path";
-import { diagnostic, suggest, type Diagnostic } from "../schema/diagnostic.js";
+import { diagnostic, suggest, type Diagnostic, type SpecPath } from "../schema/diagnostic.js";
 import type { AppSpec, PageSpec, SectionSpec } from "../schema/types.js";
-import type { Catalog } from "./catalog.js";
+import { isComponentName, type Catalog } from "./catalog.js";
 import type { NovaConfig } from "./config.js";
 import type { PositionMap } from "./load.js";
 import { createProgram, moduleExports, resolveModule, type ExportInfo } from "./program.js";
 
-/** A path into the YAML document, e.g. ["pages", "/", "sections", 1, "rows"]. */
-export type SpecPath = (string | number)[];
-
-// Same admission rule catalogs use: only capitalised, callable exports count as
-// usable components.
-const isComponentName = (name: string) => /^[A-Z]/.test(name);
+export type { SpecPath };
 
 function collectLocalModules(sections: SectionSpec[], into: Set<string>): void {
   for (const section of sections) {

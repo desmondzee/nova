@@ -9,7 +9,12 @@ export type Catalog = {
   names(): string[];
 };
 
-const isComponentName = (name: string) => /^[A-Z]/.test(name);
+/**
+ * The admission rule for a usable component, shared with `resolve.ts` so a catalog
+ * export and a local-module export are judged by the same test: only a capitalised name
+ * can appear in JSX as a component (a lowercase one is an intrinsic element).
+ */
+export const isComponentName = (name: string) => /^[A-Z]/.test(name);
 
 export function readCatalogs(
   config: NovaConfig,

@@ -21,6 +21,25 @@ import { compileApp } from "@light/nova/compile";
 import type { AppSpec } from "@light/nova/schema";
 ```
 
+`./compile` is the whole pipeline and loads TypeScript. `./schema` is the spec format on
+its own — types, `validate`, and nothing that pulls in a compiler or a YAML parser.
+
+To check a spec without compiling it, use `parseSpec` from `./compile`: it parses the
+YAML, validates the shape, and reports `NOVA1xxx` with real line and column numbers. It
+reads no catalogs, resolves no names and emits nothing.
+
+```ts
+import { parseSpec } from "@light/nova/compile";
+
+const { spec, diagnostics } = parseSpec("apps/trips/app.yaml", source);
+```
+
+`./schema`'s `validate(raw, positions)` is the same check without the YAML dependency —
+for a consumer that already holds a parsed document. `positions` maps a path inside the
+document to a source position; `loadSpecFile` (exported from `./compile`) builds a
+precise one from the YAML, and `atFile(file)` (exported from `./schema`) is the
+dependency-free fallback that pins every diagnostic to the top of the named file.
+
 ## Use
 
 ```ts

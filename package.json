@@ -5,9 +5,11 @@
   "type": "module",
   "engines": { "node": ">=20" },
   "files": ["dist"],
+  "publishConfig": { "access": "public" },
   "exports": {
     "./schema": { "types": "./dist/schema/index.d.ts", "default": "./dist/schema/index.js" },
-    "./compile": { "types": "./dist/compile/index.d.ts", "default": "./dist/compile/index.js" }
+    "./compile": { "types": "./dist/compile/index.d.ts", "default": "./dist/compile/index.js" },
+    "./package.json": "./package.json"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

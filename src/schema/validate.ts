@@ -1,4 +1,10 @@
-import { diagnostic, suggest, type Diagnostic, type PositionMap } from "./diagnostic.js";
+import {
+  diagnostic,
+  suggest,
+  type Diagnostic,
+  type PositionMap,
+  type SpecPath,
+} from "./diagnostic.js";
 import {
   parseBinding,
   parseComponentRef,
@@ -17,7 +23,7 @@ const ROUTE = /^\/$|^(?:\/(?:[A-Za-z0-9\-_]+|:[A-Za-z_$][A-Za-z0-9_$]*))+$/;
 // (rawPages, filters, props) are sorted so downstream emission is byte-deterministic, while
 // loops that only check for unknown keys follow document order so diagnostics read top-to-bottom
 // in the order the author sees them in the source file.
-type Path = (string | number)[];
+type Path = SpecPath;
 
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);

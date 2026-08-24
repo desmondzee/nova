@@ -1,5 +1,12 @@
-export { diagnostic, suggest } from "./diagnostic.js";
-export type { Diagnostic, Position, PositionMap, Related, Severity } from "./diagnostic.js";
+export { atFile, diagnostic, suggest } from "./diagnostic.js";
+export type {
+  Diagnostic,
+  Position,
+  PositionMap,
+  Related,
+  Severity,
+  SpecPath,
+} from "./diagnostic.js";
 export { parseBinding, parseComponentRef } from "./types.js";
 export type {
   AppSpec,

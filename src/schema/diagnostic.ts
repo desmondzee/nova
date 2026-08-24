@@ -4,8 +4,34 @@ export type Position = { file: string; line: number; col: number };
 
 export type Related = Position & { message: string };
 
+/**
+ * A path into the spec document, e.g. ["pages", "/", "sections", 1, "rows"].
+ *
+ * Declared here — next to `PositionMap`, the one thing that consumes it — rather than
+ * once per layer. `resolve.ts` (spec origins) and `emit/emitter.ts` (the line map) both
+ * import it, so the package has one publicly-named spelling of the concept instead of
+ * three structurally identical ones.
+ */
+export type SpecPath = (string | number)[];
+
 /** Resolves a path within the spec document to a source position. */
-export type PositionMap = { at(path: (string | number)[]): Position };
+export type PositionMap = { at(path: SpecPath): Position };
+
+/**
+ * A `PositionMap` that resolves every path to the top of `file`.
+ *
+ * `validate` needs positions, and the only precise implementation is built by
+ * `loadSpecFile`, which lives in `@light/nova/compile` because it owns the YAML
+ * dependency (design §7.1 keeps `@light/nova/schema` dependency-free). This is the
+ * dependency-free fallback: a consumer that has already parsed a document by some other
+ * route can call `validate(raw, atFile("app.yaml"))` and get every diagnostic, with the
+ * file right and the line/column pinned at 1:1. Use `parseSpec` from
+ * `@light/nova/compile` when precise positions matter.
+ */
+export function atFile(file: string): PositionMap {
+  const position: Position = { file, line: 1, col: 1 };
+  return { at: () => position };
+}
 
 export type Diagnostic = {
   code: string;

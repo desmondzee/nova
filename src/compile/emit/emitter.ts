@@ -1,4 +1,6 @@
-export type SpecPath = (string | number)[];
+import type { SpecPath } from "../../schema/diagnostic.js";
+
+export type { SpecPath };
 export type LineMap = Map<number, SpecPath>;
 
 export class Emitter {

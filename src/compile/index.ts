@@ -18,8 +18,22 @@ import { resolveApp } from "./resolve.js";
 import { typecheckEmitted } from "./typecheck.js";
 
 export type { NovaConfig } from "./config.js";
-export type { EmittedFile } from "./emit/index.js";
-export type { Diagnostic } from "../schema/diagnostic.js";
+export { loadSpecFile, parseSpec } from "./load.js";
+export type { AppSpec } from "../schema/types.js";
+export type { EmittedFile, LineMap } from "./emit/index.js";
+// Every type reachable through a `./compile` signature is nameable from `./compile`:
+// `EmittedFile.map` is a `LineMap`, which is `Map<number, SpecPath>`; `Diagnostic`
+// carries a `Severity` and an optional `Related[]`, and `Related` extends `Position`.
+// A consumer writing a helper over any of those must not have to reach into `./schema`
+// or resort to indexed-access gymnastics to spell the type out.
+export type {
+  Diagnostic,
+  Position,
+  PositionMap,
+  Related,
+  Severity,
+  SpecPath,
+} from "../schema/diagnostic.js";
 
 export type CompileResult = {
   ok: boolean;
