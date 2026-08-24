@@ -37,8 +37,40 @@ function expr(value: PropValue): string {
       // page function instead — see paramLocal below.
       return paramLocal(ref.name);
     case "filter":
-      return `filters.${ref.name}`;
+      // A write reaches the component as a setter for that one filter, so the component
+      // needs no knowledge of the filter's name. The parameter is annotated rather than
+      // left to contextual typing: a prop typed `(value: number) => void` should be a
+      // type error at the spec line, not an implicit any.
+      return ref.mode === "set"
+        ? `(value: string) => filters.set(${JSON.stringify(ref.name)}, value)`
+        : `filters.${ref.name}`;
   }
+}
+
+/**
+ * The confirmation message guarding each action bound on a page, if any.
+ *
+ * Keyed by action rather than by section because a page hoists one `useAction` per
+ * action above every section that binds it; `validate` has already reported any page
+ * where two sections disagree about the text (NOVA1010), so the last writer here is the
+ * only writer.
+ */
+function confirmByAction(sections: SectionSpec[]): Map<string, string> {
+  const out = new Map<string, string>();
+  const walk = (list: SectionSpec[]) => {
+    for (const s of list) {
+      if (s.confirm !== undefined) {
+        for (const value of Object.values(s.props)) {
+          if (value.kind === "binding" && value.ref.kind === "actions") {
+            out.set(value.ref.name, s.confirm);
+          }
+        }
+      }
+      walk(s.children);
+    }
+  };
+  walk(sections);
+  return out;
 }
 
 export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
@@ -128,8 +160,11 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
         app.loaderOrigins[name],
       );
     }
+    const confirms = confirmByAction(page.sections);
     for (const name of usedActions) {
-      e.line(`const ${name}Action = useAction("/_actions/${name}");`);
+      const confirm = confirms.get(name);
+      const opts = confirm === undefined ? "" : `, { confirm: ${JSON.stringify(confirm)} }`;
+      e.line(`const ${name}Action = useAction("/_actions/${name}"${opts});`);
     }
     if (used.length > 0) {
       const anyError = used.map((n) => `${n}.error`).join(" ?? ");

@@ -1,0 +1,7 @@
+pages:
+  "/":
+    sections:
+      - ActionButton:
+          label: Delete
+          onSubmit: actions#deleteTrip
+          confirm: Delete this trip?

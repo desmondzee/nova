@@ -105,6 +105,85 @@ describe("validate", () => {
     expect(diagnostics.find((d) => d.code === "NOVA1001")!.message).toContain("reserved");
   });
 
+  it("accepts 'confirm' on a section that binds exactly one action", () => {
+    const { spec, diagnostics } = check(
+      [
+        "pages:",
+        '  "/":',
+        "    sections:",
+        "      - DeleteButton:",
+        "          label: Delete",
+        "          onSubmit: actions#deleteTrip",
+        "          confirm: Delete this trip?",
+        "",
+      ].join("\n"),
+    );
+    expect(diagnostics).toEqual([]);
+    const section = spec!.pages[0]!.sections[0]!;
+    expect(section.confirm).toBe("Delete this trip?");
+    // Consumed by nova, not forwarded: a component that does not declare a `confirm`
+    // prop would otherwise fail with a NOVA3001 the author cannot act on.
+    expect(section.props.confirm).toBeUndefined();
+    expect(Object.keys(section.props).sort()).toEqual(["label", "onSubmit"]);
+  });
+
+  it("reports 'confirm' on a section that binds no action", () => {
+    const { diagnostics } = check(
+      'pages:\n  "/":\n    sections:\n      - StatCard: { label: a, value: b, confirm: Sure? }\n',
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1007"]);
+    expect(diagnostics[0]!.message).toContain("no action");
+  });
+
+  it("reports 'confirm' on a section that binds two different actions", () => {
+    const { diagnostics } = check(
+      [
+        "pages:",
+        '  "/":',
+        "    sections:",
+        "      - Pair:",
+        "          onSave: actions#save",
+        "          onDrop: actions#drop",
+        "          confirm: Sure?",
+        "",
+      ].join("\n"),
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1007"]);
+    expect(diagnostics[0]!.message).toContain("2 actions");
+  });
+
+  it("reports one action bound with two different confirmations on one page", () => {
+    // useAction is hoisted once per action per page, so two sections asking for
+    // different confirmation text on the same action cannot both be honoured. Silently
+    // picking one would ship a delete button with the wrong prompt.
+    const { diagnostics } = check(
+      [
+        "pages:",
+        '  "/":',
+        "    sections:",
+        "      - A: { onSubmit: actions#drop, confirm: Really? }",
+        "      - B: { onSubmit: actions#drop, confirm: Are you sure? }",
+        "",
+      ].join("\n"),
+    );
+    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1010"]);
+    expect(diagnostics[0]!.message).toContain("drop");
+  });
+
+  it("accepts the same action bound twice on one page with the same confirmation", () => {
+    const { diagnostics } = check(
+      [
+        "pages:",
+        '  "/":',
+        "    sections:",
+        "      - A: { onSubmit: actions#drop, confirm: Really? }",
+        "      - B: { onSubmit: actions#drop, confirm: Really? }",
+        "",
+      ].join("\n"),
+    );
+    expect(diagnostics).toEqual([]);
+  });
+
   it("collects every problem rather than stopping at the first", () => {
     const { diagnostics } = check(
       'pages:\n  "/":\n    titel: a\n    sections: "nope"\n  bad:\n    sections: []\n',

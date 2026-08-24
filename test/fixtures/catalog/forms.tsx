@@ -28,6 +28,22 @@ export function ActionButton(props: {
   );
 }
 
+/** A filter widget: reads one filter value and writes it back. */
+export function FilterBar(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}): React.ReactElement {
+  return (
+    <label>
+      {props.label}
+      <button type="button" onClick={() => props.onChange(props.value)}>
+        {props.value}
+      </button>
+    </label>
+  );
+}
+
 export function Formatter(props: {
   label: string;
   value: number;

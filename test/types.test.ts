@@ -14,7 +14,25 @@ describe("parseBinding", () => {
     expect(parseBinding("actions#saveTravel")).toEqual({ kind: "actions", name: "saveTravel" });
     expect(parseBinding("compute#formatKm")).toEqual({ kind: "compute", name: "formatKm" });
     expect(parseBinding("params.id")).toEqual({ kind: "param", name: "id" });
-    expect(parseBinding("filters.month")).toEqual({ kind: "filter", name: "month" });
+    expect(parseBinding("filters.month")).toEqual({ kind: "filter", name: "month", mode: "read" });
+  });
+
+  it("parses a filter write as a distinct mode of the same reference", () => {
+    // `filters.set` is unreachable from any spec until a binding form produces it, which
+    // makes §5's URL round trip read-only. A write is the same filter reference in a
+    // different mode rather than a fourth namespace, so NOVA2006 ("page declares no
+    // filter 'x'") already covers a typo in the name with no new resolve code.
+    expect(parseBinding("filters.month.set")).toEqual({
+      kind: "filter",
+      name: "month",
+      mode: "set",
+    });
+  });
+
+  it("rejects a filter path that is neither a read nor a write", () => {
+    expect(parseBinding("filters.month.value")).toBeNull();
+    expect(parseBinding("filters.month.set.x")).toBeNull();
+    expect(parseBinding("params.id.set")).toBeNull();
   });
 
   it("returns null for a plain string literal", () => {

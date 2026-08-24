@@ -1,0 +1,9 @@
+pages:
+  "/":
+    filters:
+      month: { default: "2026-08" }
+    sections:
+      - FilterBar:
+          label: Month
+          value: filters.month
+          onChange: filters.month.set

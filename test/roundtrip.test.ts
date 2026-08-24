@@ -1,4 +1,4 @@
-import { cpSync, mkdtempSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -124,6 +124,69 @@ describe("actions, compute bindings and nested children", () => {
     const file = result.files.find((f) => f.name === "pages.tsx")!;
     const lineNo = file.text.split("\n").findIndex((l) => l.includes("<Formatter ")) + 1;
     expect(file.map.get(lineNo)).toEqual(["pages", "/", "sections", 0, "children", 1]);
+  });
+});
+
+describe("confirmation before a destructive action", () => {
+  it("passes the spec's confirm text into useAction, and typechecks under the strict host", async () => {
+    // §5 lists confirmation as an interaction the format owns, and useAction's runtime
+    // half has always accepted `opts.confirm` — but `validate` had no `confirm:` key, so
+    // every generated `useAction` call was emitted with one argument and the guard was
+    // unreachable from any spec.
+    const appDir = app("app-confirm");
+    const result = await compileApp(appDir, {
+      ...withForms(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain(
+      'const deleteTripAction = useAction("/_actions/deleteTrip", { confirm: "Delete this trip?" });',
+    );
+    // Consumed by nova rather than forwarded — ActionButton declares no `confirm` prop.
+    expect(pages).not.toContain("confirm={");
+  });
+
+  it("emits useAction with one argument when no section asks to confirm", async () => {
+    const appDir = app("app-actions");
+    const result = await compileApp(appDir, withForms(appDir));
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
+  });
+});
+
+describe("filter writes", () => {
+  it("emits filters.set for a write binding and typechecks under the strict host", async () => {
+    // `useFilters` has always returned a `set`, kept a popstate listener and written back
+    // to the query string — and no emitter could produce a call to it, so a generated
+    // page could display a filter and feed it to a loader but never change one.
+    const appDir = app("app-filter-write");
+    const result = await compileApp(appDir, {
+      ...withForms(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain("value={filters.month}");
+    expect(pages).toContain('onChange={(value: string) => filters.set("month", value)}');
+    // A page whose only filter use is a write still needs the local and the hook.
+    expect(pages).toContain("const filters = useFilters(");
+    const runtime = result.files.find((f) => f.name === "runtime.tsx")!.text;
+    expect(runtime).toContain("export function useFilters");
+  });
+
+  it("reports a write to a filter the page does not declare", async () => {
+    const appDir = app("app-filter-write");
+    const specFile = join(appDir, "app.yaml");
+    writeFileSync(
+      specFile,
+      readFileSync(specFile, "utf8").replace("filters.month.set", "filters.mnoth.set"),
+    );
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((d) => d.code)).toEqual(["NOVA2006"]);
   });
 });
 
