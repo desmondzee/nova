@@ -173,19 +173,50 @@ assigned back to, so it cannot catch a spec/code type mismatch (`pages.tsx`
 already does); it catches loader arity and a loader that isn't declared
 `async`, which `pages.tsx`'s JSX has no occasion to exercise.
 
-**`confirm:` is not implemented.** The spec format and `useAction`'s runtime
-support a confirmation prompt before a destructive action (`opts.confirm`,
-plumbed through to `window.confirm`), but there is currently no schema key
-that sets it — `validate` has no `confirm:` handling, so nothing in a spec can
-populate `opts.confirm` yet.
+**Three pieces of runtime machinery are not wired up to anything a spec can
+say.** Each exists, is typechecked, and ships into a generated app that uses
+the hook it belongs to — but no spec syntax reaches it, so no generated page
+uses it today.
 
-**`fieldErrors` and the empty state are not consumed by any generated page.**
-`useAction`'s `ActionState` carries `fieldErrors`, and `states.empty` is
-validated against the catalog on every compile, but no generated `pages.tsx`
-currently renders either one: no emitted form wires a returned field error
-back onto its input, and the empty state component is never rendered even
-when a loader's result is empty. Both are real, typechecked runtime/catalog
-surface — just not yet reached by codegen.
+- **Filters are read-only from a spec.** `useFilters` returns
+  `{ ...values, set }` and maintains a `popstate` listener and a
+  `history.replaceState` setter, so a filter value survives a refresh. But
+  there is no binding form that *writes* one: `filters.month` is a read, and
+  nothing nova emits ever calls `filters.set(...)`. A generated page can
+  display a filter and feed it to a loader; it cannot change one. Until a
+  binding form for that exists, filters move only if something outside nova
+  edits the query string.
+- **`confirm:` is not implemented.** `useAction` accepts
+  `opts.confirm` and plumbs it through to `window.confirm`, but `validate`
+  has no `confirm:` key, so nothing in a spec can populate it, and
+  `useAction` is always emitted with one argument.
+- **`fieldErrors` is not bound into form fields.** `useAction`'s
+  `ActionState` carries `fieldErrors` (and `busy`, and `error`), but an
+  action reaches a component as exactly one thing — `.run`. No emitted form
+  wires a returned field error back onto its input.
+
+**The empty state is validated but never rendered.** `states.empty` is
+required config and is checked against the catalog on every compile, but no
+generated page renders it, even when a loader's result is empty. The
+loading and error states are rendered; the empty one is not.
+
+**Loading is inferred from `value === null`, not from `state.loading`.** A
+page shows its loading component while any of its loaders has a null value.
+A loader that legitimately resolves to `null` — `Promise<Trip | null>`, an
+ordinary signature — therefore pins the page on the loading state. The
+`loading` flag `useLoader` maintains is not read by any generated page.
+
+**Loading and error states are page-level, not per binding.** One slow
+loader blanks the whole page, and one failing loader replaces it with the
+error component. Per-binding states are not expressible.
+
+**The handler-to-loader boundary is not typechecked.** `handlers.ts` hands
+URL search params (and, for an action, the parsed JSON body) to your function
+through `as never`. That is the one place an untyped external value meets a
+typed signature, and nothing checks it: a loader narrowed to
+`input: { status: "open" | "closed" }` compiles even though a request can
+supply any string. Validate inputs inside the loader if the distinction
+matters.
 
 **The input hash does not cover source file contents.** The stamp written
 into each emitted file's header covers the spec source, the whole config

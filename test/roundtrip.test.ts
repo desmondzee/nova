@@ -40,6 +40,93 @@ const configFor = (appDir: string): NovaConfig => ({
   tsconfigPath: join(appDir, "..", "tsconfig.json"),
 });
 
+// Catalog components for prop shapes ui.tsx has none for: children, a bound action
+// callback, and a bound compute function. A second catalog module rather than more
+// exports on ui.tsx, so nothing already asserted about ui.tsx's export list moves.
+const withForms = (appDir: string): NovaConfig => ({
+  ...configFor(appDir),
+  components: ["../catalog/ui", "../catalog/forms"],
+});
+
+describe("actions, compute bindings and nested children", () => {
+  // All three worked end to end and none had a single test. app-actions exercises them
+  // together, through compileApp, so the assertions below are backed by a real
+  // typecheck of the emitted output rather than string matching alone.
+
+  it("compiles an app with an action, a compute binding and nested children", async () => {
+    // Under the strict host tsconfig (noUnusedLocals, noUnusedParameters,
+    // noUncheckedIndexedAccess), since these three features had no coverage at any
+    // strictness level.
+    const appDir = app("app-actions");
+    const result = await compileApp(appDir, {
+      ...withForms(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("binds an action to a component prop and emits its POST handler", async () => {
+    const appDir = app("app-actions");
+    const result = await compileApp(appDir, withForms(appDir));
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
+    expect(pages).toContain("onSubmit={saveTripAction.run}");
+    const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
+    expect(handlers).toContain('"POST /_actions/saveTrip"');
+    expect(handlers).toContain("await actions.saveTrip(");
+    // __contract.ts binds the action to its derived type, so a signature change in
+    // actions.ts surfaces at the spec line that named it.
+    const contract = result.files.find((f) => f.name === "__contract.ts")!.text;
+    expect(contract).toContain("const _saveTrip: SaveTrip = actions.saveTrip;");
+    // useAction is now emitted because this app binds one — and only because of that.
+    const runtime = result.files.find((f) => f.name === "runtime.tsx")!.text;
+    expect(runtime).toContain("export function useAction");
+  });
+
+  it("passes a compute function through by reference, with no HTTP handler", async () => {
+    const appDir = app("app-actions");
+    const result = await compileApp(appDir, withForms(appDir));
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).toContain('import * as compute from "../compute";');
+    expect(pages).toContain("format={compute.formatKm}");
+    // §6.4: pure, bundled into the client. No endpoint, and no entry in handlers.ts.
+    const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
+    expect(handlers).not.toContain("formatKm");
+    expect(handlers).not.toContain("compute");
+  });
+
+  it("nests a section's children inside its element, indented", async () => {
+    const appDir = app("app-actions");
+    const result = await compileApp(appDir, withForms(appDir));
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    const lines = pages.split("\n");
+    const open = lines.findIndex((l) => l.includes("<Panel "));
+    const close = lines.findIndex((l) => l.includes("</Panel>"));
+    expect(open).toBeGreaterThan(-1);
+    expect(close).toBeGreaterThan(open);
+    expect(lines[open]!.trimEnd().endsWith(">")).toBe(true);
+    expect(lines[open]).not.toContain("/>");
+    const inner = lines.slice(open + 1, close);
+    expect(inner.some((l) => l.includes("<Table "))).toBe(true);
+    expect(inner.some((l) => l.includes("<Formatter "))).toBe(true);
+    expect(inner.some((l) => l.includes("<ActionButton "))).toBe(true);
+    // Children are indented one level deeper than the element that holds them.
+    const indent = (l: string) => l.length - l.trimStart().length;
+    for (const line of inner) expect(indent(line)).toBe(indent(lines[open]!) + 2);
+  });
+
+  it("maps a nested child's generated line back to its own spec path", async () => {
+    // The line map has to descend through `children:` too, or a type error inside a
+    // nested section reports against the parent — or, worse, nothing at all.
+    const appDir = app("app-actions");
+    const result = await compileApp(appDir, withForms(appDir));
+    const file = result.files.find((f) => f.name === "pages.tsx")!;
+    const lineNo = file.text.split("\n").findIndex((l) => l.includes("<Formatter ")) + 1;
+    expect(file.map.get(lineNo)).toEqual(["pages", "/", "sections", 0, "children", 1]);
+  });
+});
+
 describe("round trip", () => {
   it("emits output that typechecks clean for a correct spec", async () => {
     const appDir = app("app-basic");

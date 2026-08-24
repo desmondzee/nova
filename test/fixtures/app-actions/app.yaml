@@ -1,0 +1,19 @@
+pages:
+  "/":
+    title: Trips
+    filters:
+      month: { default: "2026-08" }
+    sections:
+      - Panel:
+          title: This month
+          children:
+            - Table:
+                rows: data#rows
+                columns: [name]
+            - Formatter:
+                label: Distance
+                value: data#distance
+                format: compute#formatKm
+            - ActionButton:
+                label: Save
+                onSubmit: actions#saveTrip
