@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { extname, join, relative, sep } from "node:path";
 import { diagnostic, suggest, type Diagnostic } from "../schema/diagnostic.js";
 import type { AppSpec, PageSpec, SectionSpec } from "../schema/types.js";
 import type { Catalog } from "./catalog.js";
@@ -109,6 +109,24 @@ export function resolveApp(
     return localHandle ? moduleExports(localHandle.program, file) : [];
   }
 
+  // catalog.ts and the local-component resolution above both resolve a component's
+  // module specifier relative to the spec file (ctx.appDir). But emitPages copies
+  // `ModuleBinding.module` verbatim into a file that ends up written to
+  // `ctx.appDir/ctx.config.outDir` — one or more directories deeper. A relative
+  // specifier that was correct from the spec file's directory is not necessarily
+  // correct from there, so any relative specifier is rewritten here, once, to be
+  // correct as seen from outDir, using the already-resolved absolute file (either
+  // `CatalogEntry.file` or the `resolveModule` result for a local ref). Bare
+  // specifiers (bare package imports, e.g. "@scope/ui") are left untouched — they
+  // resolve independently of file depth.
+  function specifierFromOutDir(specifier: string, resolvedFile: string): string {
+    if (!specifier.startsWith(".")) return specifier;
+    const outDir = join(ctx.appDir, ctx.config.outDir);
+    const noExt = resolvedFile.slice(0, resolvedFile.length - extname(resolvedFile).length);
+    const rel = relative(outDir, noExt).split(sep).join("/");
+    return rel.startsWith(".") ? rel : `./${rel}`;
+  }
+
   function addComponent(name: string, module: string, at: { file: string; line: number; col: number }): void {
     const existing = components.get(name);
     if (existing) {
@@ -151,7 +169,7 @@ export function resolveApp(
       );
       continue;
     }
-    addComponent(name, entry.module, ctx.positions.at([]));
+    addComponent(name, specifierFromOutDir(entry.module, entry.file), ctx.positions.at([]));
   }
 
   const fatal = out.some((d) => d.severity === "error");
@@ -193,7 +211,7 @@ export function resolveApp(
             }),
           );
         } else {
-          addComponent(name, entry.module, ctx.positions.at(at));
+          addComponent(name, specifierFromOutDir(entry.module, entry.file), ctx.positions.at(at));
         }
       } else {
         const { module, name } = section.component;
@@ -221,7 +239,7 @@ export function resolveApp(
               ),
             );
           } else {
-            addComponent(name, module, ctx.positions.at(at));
+            addComponent(name, specifierFromOutDir(module, resolvedFile), ctx.positions.at(at));
           }
         }
       }

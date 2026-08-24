@@ -21,16 +21,12 @@ function fixtureCopy(): string {
   dirs.push(root);
   cpSync(join(fixturesDir, "app-basic"), join(root, "app-basic"), { recursive: true });
   cpSync(join(fixturesDir, "tsconfig.json"), join(root, "tsconfig.json"));
-  // The "../catalog/ui" specifier in configFor() is resolved from two different
-  // locations by the pipeline: readCatalogs resolves it relative to app.yaml
-  // (appDir), while the emitted pages.tsx carries that same literal specifier and
-  // gets typechecked relative to generated/ (appDir/generated) — one directory
-  // deeper. A single catalog copy can only satisfy one of those; both need to
-  // resolve to real files, so the catalog is copied to both of the directories
-  // "../catalog/ui" can be resolved against: sibling of app-basic (for app.yaml)
-  // and nested under app-basic (for app-basic/generated).
+  // A single, realistic copy: catalog lives as a sibling of app-basic, exactly where
+  // readCatalogs (resolving "../catalog/ui" relative to app.yaml) validates it.
+  // resolveApp rewrites that specifier to be correct as seen from generated/ before
+  // it is ever written into emitted code, so no second copy nested under app-basic
+  // is needed here.
   cpSync(join(fixturesDir, "catalog"), join(root, "catalog"), { recursive: true });
-  cpSync(join(fixturesDir, "catalog"), join(root, "app-basic", "catalog"), { recursive: true });
   return join(root, "app-basic");
 }
 afterEach(() => {

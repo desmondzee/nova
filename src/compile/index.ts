@@ -30,6 +30,22 @@ export type CompileResult = {
 
 const VERSION = "0.0.0";
 
+/**
+ * Deterministic JSON: object keys are sorted recursively so two `NovaConfig` values
+ * with the same content but different key insertion order still stringify identically.
+ * Array order is preserved as given (array order matters, e.g. `components` order can
+ * affect diagnostics ordering — see resolve.ts — so it is not sorted here).
+ */
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    const keys = Object.keys(record).sort();
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(record[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 const fail = (diagnostics: Diagnostic[]): CompileResult => ({
   ok: false,
   diagnostics,
@@ -37,6 +53,20 @@ const fail = (diagnostics: Diagnostic[]): CompileResult => ({
   written: [],
 });
 
+/**
+ * Compiles one app end to end: load → validate → catalogs → resolve → emit → write →
+ * typecheck. Each stage stops the pipeline as soon as it produces an error diagnostic,
+ * so (for example) a missing `sections` key never cascades into fifty downstream type
+ * errors from `typecheckEmitted`.
+ *
+ * @param opts.write - Defaults to `true`. When `false`, the whole pipeline still runs
+ * in memory and `result.files` is still populated, but nothing is written to disk and
+ * `typecheckEmitted` is skipped entirely — there is nothing on disk yet for TypeScript
+ * to check. This is what a `--check`/preview mode uses to see what would be emitted.
+ * Consequently, `result.ok === true` under `write: false` means only "the spec resolved
+ * and emitted successfully" — it does NOT mean the emitted output type-checks. Only a
+ * `write: true` run (the default) verifies that.
+ */
 export async function compileApp(
   appDir: string,
   config: NovaConfig,
@@ -50,15 +80,17 @@ export async function compileApp(
     ]);
   }
 
+  const isError = (d: Diagnostic) => d.severity === "error";
+
   const source = readFileSync(specFile, "utf8");
   const { raw, positions, diagnostics: loadDiags } = loadSpecFile(specFile, source);
-  if (loadDiags.length > 0) return fail(loadDiags);
+  if (loadDiags.some(isError)) return fail(loadDiags);
 
   const { spec, diagnostics: validateDiags } = validate(raw, positions);
   if (!spec) return fail(validateDiags);
 
   const { catalog, diagnostics: catalogDiags } = readCatalogs(config, specFile);
-  if (catalogDiags.length > 0) return fail([...validateDiags, ...catalogDiags]);
+  if (catalogDiags.some(isError)) return fail([...validateDiags, ...catalogDiags]);
 
   const { resolved, diagnostics: resolveDiags } = resolveApp(spec, {
     config,
@@ -69,10 +101,15 @@ export async function compileApp(
   });
   if (!resolved) return fail([...validateDiags, ...resolveDiags]);
 
+  // Covers the spec source, the whole nova.config (so a change to states, outDir,
+  // importExtension or tsconfigPath — all of which affect emitted output — changes the
+  // stamp too) and the compiler version. It does NOT cover the contents of data.ts,
+  // actions.ts, compute.ts, or any catalog/local component file, so it is not yet
+  // sufficient on its own to safely skip work when only those change.
   const hash = createHash("sha256")
     .update(source)
     .update("\n")
-    .update([...config.components].sort().join("\n"))
+    .update(stableStringify(config))
     .update("\n")
     .update(VERSION)
     .digest("hex")
@@ -104,6 +141,7 @@ export async function compileApp(
     }
   }
 
+  // Skipped under write: false — nothing was written to disk for TypeScript to check.
   const typeDiags = write
     ? typecheckEmitted({ files, outDir, tsconfigPath: config.tsconfigPath, positions })
     : [];

@@ -33,14 +33,18 @@ describe("resolveApp", () => {
     expect(resolved).not.toBeNull();
   });
 
-  it("collects components with the module to import them from", () => {
+  it("collects components with the module to import them from, rewritten as seen from outDir", () => {
     const { resolved } = run();
+    // catalog.ts resolves "../catalog/ui" relative to app.yaml (APP_DIR). resolveApp
+    // rewrites that to be correct from APP_DIR/generated instead, since that's where the
+    // module specifier actually ends up (verbatim, in emitted code): one more ".." to
+    // climb back out of "generated" than out of APP_DIR itself.
     expect(resolved!.components).toEqual([
-      { name: "EmptyState", module: "../catalog/ui" },
-      { name: "ErrorNotice", module: "../catalog/ui" },
-      { name: "Loading", module: "../catalog/ui" },
-      { name: "StatCard", module: "../catalog/ui" },
-      { name: "Table", module: "../catalog/ui" },
+      { name: "EmptyState", module: "../../catalog/ui" },
+      { name: "ErrorNotice", module: "../../catalog/ui" },
+      { name: "Loading", module: "../../catalog/ui" },
+      { name: "StatCard", module: "../../catalog/ui" },
+      { name: "Table", module: "../../catalog/ui" },
     ]);
   });
 
@@ -104,7 +108,8 @@ describe("resolveApp", () => {
       'pages:\n  "/":\n    sections:\n      - "./collide#Table": {}\n',
     );
     expect(diagnostics).toEqual([]);
-    expect(resolved!.components).toContainEqual({ name: "Table", module: "./collide" });
+    // "./collide" (relative to app.yaml) becomes "../collide" as seen from generated/.
+    expect(resolved!.components).toContainEqual({ name: "Table", module: "../collide" });
   });
 
   it("reports a local component whose module cannot be resolved", () => {

@@ -67,7 +67,11 @@ describe("emitRuntime", () => {
 describe("emitPages", () => {
   it("imports components from their catalog module and nothing from nova", () => {
     const { text } = emitPages(resolved(), config);
-    expect(text).toContain('import { EmptyState, ErrorNotice, Loading, StatCard, Table } from "../catalog/ui";');
+    // "../catalog/ui" (relative to app.yaml) is rewritten by resolveApp to "../../catalog/ui"
+    // as seen from APP_DIR/generated, where this import actually ends up.
+    expect(text).toContain(
+      'import { EmptyState, ErrorNotice, Loading, StatCard, Table } from "../../catalog/ui";',
+    );
     expect(text).not.toContain("@light/nova");
     expect(text).not.toContain("@platform/");
   });
@@ -120,18 +124,18 @@ describe("typechecks emitted output", () => {
 
     // Written alongside the fixture app (not a bare OS tmpdir) so that
     // node_modules resolution walking up from the generated files still
-    // finds the project's real "react"/"typescript" packages, and so the
-    // generated ".." imports (../data, ../catalog/ui) resolve against a
-    // layout that mirrors the real fixture tree.
+    // finds the project's real "react"/"typescript" packages. "tmp" is created as a
+    // direct child of FIXTURES_DIR — the same nesting depth as app-basic — so it does
+    // not need its own catalog copy: resolveApp already rewrote the catalog import to
+    // "../../catalog/ui" (as seen from an app's generated/ directory), and that same
+    // two-levels-up path from tmp/generated lands on the one real fixtures/catalog.
     const tmp = mkdtempSync(join(FIXTURES_DIR, ".tmp-emit-"));
     try {
       const generatedDir = join(tmp, "generated");
       mkdirSync(generatedDir, { recursive: true });
-      mkdirSync(join(tmp, "catalog"), { recursive: true });
 
       copyFileSync(here("./fixtures/app-basic/data.ts"), join(tmp, "data.ts"));
       copyFileSync(here("./fixtures/app-basic/actions.ts"), join(tmp, "actions.ts"));
-      copyFileSync(here("./fixtures/catalog/ui.tsx"), join(tmp, "catalog", "ui.tsx"));
 
       for (const file of files) {
         writeFileSync(join(generatedDir, file.name), file.text);
