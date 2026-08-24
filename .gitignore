@@ -5,3 +5,4 @@ dist/
 # Scratch app trees created by test/compile.test.ts; afterEach removes them, this is
 # just a backstop against a crash mid-test leaving one behind.
 test/fixtures/tmp-app-*
+*.tgz
