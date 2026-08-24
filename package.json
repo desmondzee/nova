@@ -1,0 +1,26 @@
+{
+  "name": "@light/nova",
+  "version": "0.0.0",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=20" },
+  "files": ["dist"],
+  "exports": {
+    "./schema": { "types": "./dist/schema/index.d.ts", "default": "./dist/schema/index.js" },
+    "./compile": { "types": "./dist/compile/index.d.ts", "default": "./dist/compile/index.js" }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": { "yaml": "^2.9.0" },
+  "peerDependencies": { "typescript": ">=5.5" },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.1.0",
+    "react": "^19.1.0",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}
