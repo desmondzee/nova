@@ -48,4 +48,10 @@ describe("suggest", () => {
   it("prefers the closest candidate when several are near", () => {
     expect(suggest("Ro", ["Row", "Root", "Table"])).toBe("Row");
   });
+
+  it("breaks a genuine tie (equal edit distance) alphabetically", () => {
+    // "Cel" is edit distance 1 from both "Col" (e/o substitution) and "Bel"
+    // (c/b substitution) — a real tie, not one resolved by the distance filter.
+    expect(suggest("Cel", ["Col", "Bel"])).toBe("Bel");
+  });
 });

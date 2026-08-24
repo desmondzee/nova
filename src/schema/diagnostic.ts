@@ -61,6 +61,7 @@ export function suggest(name: string, candidates: string[]): string | undefined 
   const limit = name.length <= 4 ? 1 : 2;
   let best: string | undefined;
   let bestScore = Infinity;
+  // Sort candidates so ties (equal distance) resolve deterministically, alphabetically-first.
   for (const c of [...candidates].sort()) {
     const d = distance(name.toLowerCase(), c.toLowerCase());
     if (d <= limit && d < bestScore) {
