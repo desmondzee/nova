@@ -1,16 +1,19 @@
-import { readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { readCatalogs } from "../src/compile/catalog.js";
 import type { NovaConfig } from "../src/compile/config.js";
 import { emitContract, emitHandlers, emitPages, emitRuntime, emitTypes } from "../src/compile/emit/index.js";
 import { loadSpecFile } from "../src/compile/load.js";
+import { createProgram } from "../src/compile/program.js";
 import { resolveApp } from "../src/compile/resolve.js";
 import { validate } from "../src/schema/validate.js";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const SPEC_FILE = here("./fixtures/app-basic/app.yaml");
+const FIXTURES_DIR = here("./fixtures/");
 
 const config: NovaConfig = {
   components: ["../catalog/ui"],
@@ -106,6 +109,64 @@ describe("emitContract", () => {
   });
 });
 
+function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
+  return diagnostics
+    .map((d) => {
+      const message = ts.flattenDiagnosticMessageText(d.messageText, "\n");
+      if (d.file && d.start !== undefined) {
+        const { line, character } = d.file.getLineAndCharacterOfPosition(d.start);
+        return `${d.file.fileName}:${line + 1}:${character + 1} - ${message}`;
+      }
+      return message;
+    })
+    .join("\n");
+}
+
+describe("typechecks emitted output", () => {
+  it("produces no semantic diagnostics for the fixture app", () => {
+    const app = resolved();
+    const files = [emitTypes, emitRuntime, emitPages, emitHandlers, emitContract].map((emit) => emit(app, config));
+
+    // Written alongside the fixture app (not a bare OS tmpdir) so that
+    // node_modules resolution walking up from the generated files still
+    // finds the project's real "react"/"typescript" packages, and so the
+    // generated ".." imports (../data, ../catalog/ui) resolve against a
+    // layout that mirrors the real fixture tree.
+    const tmp = mkdtempSync(join(FIXTURES_DIR, ".tmp-emit-"));
+    try {
+      const generatedDir = join(tmp, "generated");
+      mkdirSync(generatedDir, { recursive: true });
+      mkdirSync(join(tmp, "catalog"), { recursive: true });
+
+      copyFileSync(here("./fixtures/app-basic/data.ts"), join(tmp, "data.ts"));
+      copyFileSync(here("./fixtures/app-basic/actions.ts"), join(tmp, "actions.ts"));
+      copyFileSync(here("./fixtures/catalog/ui.tsx"), join(tmp, "catalog", "ui.tsx"));
+
+      for (const file of files) {
+        writeFileSync(join(generatedDir, file.name), file.text);
+      }
+
+      const baseTsconfig = JSON.parse(readFileSync(here("./fixtures/tsconfig.json"), "utf8")) as {
+        compilerOptions: unknown;
+      };
+      const tmpTsconfigPath = join(tmp, "tsconfig.json");
+      writeFileSync(
+        tmpTsconfigPath,
+        JSON.stringify({ compilerOptions: baseTsconfig.compilerOptions, include: [] }),
+      );
+
+      const roots = files.map((file) => join(generatedDir, file.name));
+      const handle = createProgram({ tsconfigPath: tmpTsconfigPath, roots });
+      expect(handle).not.toBeNull();
+
+      const diagnostics = handle!.program.getSemanticDiagnostics();
+      expect(diagnostics, formatDiagnostics(diagnostics)).toHaveLength(0);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("determinism", () => {
   it("produces identical bytes on repeated runs", () => {
     const a = resolved();
@@ -113,5 +174,11 @@ describe("determinism", () => {
     for (const emit of [emitTypes, emitRuntime, emitPages, emitHandlers, emitContract]) {
       expect(emit(a, config).text).toBe(emit(b, config).text);
     }
+  });
+
+  it("is insensitive to the order components were resolved in", () => {
+    const app = resolved();
+    const reordered = { ...app, components: [...app.components].reverse() };
+    expect(emitPages(reordered, config).text).toBe(emitPages(app, config).text);
   });
 });

@@ -74,10 +74,10 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
     }
     if (used.length > 0) {
       const anyError = used.map((n) => `${n}.error`).join(" ?? ");
-      const anyLoading = used.map((n) => `${n}.loading`).join(" || ");
+      const anyValueNull = used.map((n) => `${n}.value === null`).join(" || ");
       e.line(`const error = ${anyError};`);
       e.line(`if (error) return <${config.states.error}>{error}</${config.states.error}>;`);
-      e.line(`if (${anyLoading}) return <${config.states.loading} />;`);
+      e.line(`if (${anyValueNull}) return <${config.states.loading} />;`);
     }
     e.line("return (");
     e.indent().line("<>");
