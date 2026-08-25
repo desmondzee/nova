@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
 import { validate } from "../schema/validate.js";
 import { readCatalogs } from "./catalog.js";
@@ -76,6 +76,11 @@ const fail = (diagnostics: Diagnostic[]): CompileResult => ({
  * so (for example) a missing `sections` key never cascades into fifty downstream type
  * errors from `typecheckEmitted`.
  *
+ * @param appDirArg - The app folder. Relative or absolute; it is resolved against the
+ * process working directory once, here, and everything downstream — the spec file, the
+ * output directory, every emitted import specifier and every diagnostic's `file` — is
+ * absolute from that point on.
+ *
  * @param opts.write - Defaults to `true`. When `false`, the whole pipeline still runs
  * in memory and `result.files` is still populated, but nothing is written to disk and
  * `typecheckEmitted` is skipped entirely — there is nothing on disk yet for TypeScript
@@ -91,11 +96,18 @@ const fail = (diagnostics: Diagnostic[]): CompileResult => ({
  * `createSession()` and pass it to every call; results are identical either way.
  */
 export async function compileApp(
-  appDir: string,
+  appDirArg: string,
   config: NovaConfig,
   opts: { write?: boolean; session?: ProgramSession } = {},
 ): Promise<CompileResult> {
   const write = opts.write ?? true;
+  // Resolved here, once, and never used relative again. TypeScript reports every
+  // `SourceFile.fileName` as an absolute path, so a relative appDir made
+  // `typecheckEmitted`'s file map miss every entry and silently discard every
+  // NOVA3001/NOVA3002 — a compiler answering `ok: true` on output that does not
+  // compile. The README's own example passed a relative path, so that was the
+  // documented way to use it.
+  const appDir = resolve(appDirArg);
   const specFile = join(appDir, "app.yaml");
   if (!existsSync(specFile)) {
     return fail([
@@ -155,7 +167,7 @@ export async function compileApp(
     .map(stamp)
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const outDir = join(appDir, config.outDir);
+  const outDir = resolve(appDir, config.outDir);
   const written: string[] = [];
   if (write) {
     mkdirSync(outDir, { recursive: true });

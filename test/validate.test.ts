@@ -243,12 +243,21 @@ describe("validate", () => {
     expect(section.fields![1]!.initial).toBe(0);
   });
 
-  it("reports 'fields' on a section that does not submit an action", () => {
-    const { diagnostics } = check(
-      'pages:\n  "/":\n    sections:\n      - Form:\n          fields:\n            - TextField: { name: a }\n',
+  it("forwards 'fields' as an ordinary prop on a section that submits no action", () => {
+    // Was NOVA1002 "has fields but is missing required key 'submit'". `fields` is an
+    // entirely ordinary prop name for a read-only component, and that error made every
+    // such component unusable with no escape but renaming it in the host's catalog.
+    // Without a `submit:` there is no action whose input the entries could name, so they
+    // are forwarded like any other prop and the component's own type decides — a form
+    // that really did forget its `submit:` is then a NOVA3001 at that section
+    // (test/generalisation.test.ts pins that).
+    const { spec, diagnostics } = check(
+      'pages:\n  "/":\n    sections:\n      - Roster:\n          fields: [a, b]\n',
     );
-    expect(diagnostics.map((d) => d.code)).toEqual(["NOVA1002"]);
-    expect(diagnostics[0]!.message).toContain("submit");
+    expect(diagnostics).toEqual([]);
+    const section = spec!.pages[0]!.sections[0]!;
+    expect(section.fields).toBeUndefined();
+    expect(section.props.fields).toEqual({ kind: "literal", value: ["a", "b"] });
   });
 
   it("reports a 'submit' that is not an actions# binding", () => {

@@ -1,0 +1,9 @@
+pages:
+  "/":
+    filters:
+      page: { default: "1" }
+    sections:
+      - SortableTable:
+          rows: data#deals
+          columns: [id, value]
+          sortable: [id, value]

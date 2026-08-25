@@ -151,7 +151,7 @@ export function validate(
       const s = validateSection(raw, [...path, "sections", i], report, placed);
       if (s) sections.push(s);
     });
-    checkPageConsistency(route, placed, report);
+    checkPageConsistency(route, filters, [...path, "filters"], placed, report);
 
     const page: PageSpec = { route, filters, sections };
     if (title !== undefined) page.title = title;
@@ -222,9 +222,30 @@ export function validate(
    */
   function checkPageConsistency(
     route: string,
+    filters: FilterSpec[],
+    filtersPath: Path,
     placed: { path: Path; section: SectionSpec }[],
     report: typeof err,
   ): void {
+    // `sort` and `dir` are nova's own two query parameters — `useSort` reads and writes
+    // them on `window.location` — so a page that declares a filter by either name and
+    // also has a sortable section has two owners for one parameter, which compiled
+    // silently and then fought itself in the browser. They are also the two keys a
+    // loader declares to have the sort reach it, so a filter of the same name would
+    // decide what the loader is told about the sort. Only a page with a sortable section
+    // is affected: without one nothing writes `?sort=`, and the name is the author's.
+    const hasSortable = placed.some((p) => p.section.sortable !== undefined);
+    if (hasSortable) {
+      for (const filter of filters) {
+        if (filter.name !== "sort" && filter.name !== "dir") continue;
+        report(
+          "NOVA1014",
+          `filter name '${filter.name}' is reserved on page '${route}' — a sortable section keeps the page's sort state in '?sort=' and '?dir=', so both would write the same query parameter`,
+          [...filtersPath, filter.name],
+        );
+      }
+    }
+
     // Everything nova attaches to that one hoisted useAction, as one comparable value.
     const attached = (s: SectionSpec) => JSON.stringify([s.confirm ?? null, s.refreshes ?? null]);
     const seen = new Map<string, string>();
@@ -364,6 +385,20 @@ export function validate(
         continue;
       }
       if (prop === "fields") {
+        // Form vocabulary only where there is a form. `fields` is an entirely ordinary
+        // prop name for a read-only component — a roster, a column list — and treating
+        // it as a form's inputs unconditionally made every such component unusable
+        // (NOVA1002: "has fields but is missing required key 'submit'") with no way to
+        // escape but renaming the prop in the host's catalog. Without a `submit:` there
+        // is no action whose input the entries could name, so the only thing left to do
+        // with them is what nova does with every other prop: forward them, and let the
+        // component's own type decide. A form that genuinely forgot its `submit:` still
+        // fails — as a NOVA3001 at that section, where the field list meets a prop that
+        // is not one.
+        if (body.submit === undefined) {
+          props[prop] = toPropValue(body[prop]);
+          continue;
+        }
         rawFields = body.fields;
         continue;
       }
@@ -445,13 +480,7 @@ export function validate(
     }
 
     if (rawFields !== undefined) {
-      if (submit === undefined) {
-        report(
-          "NOVA1002",
-          `'${key}' has fields but is missing required key 'submit' — a field edits a key of the action's input, so there has to be an action`,
-          [...path, key, "fields"],
-        );
-      } else if (!Array.isArray(rawFields)) {
+      if (!Array.isArray(rawFields)) {
         report("NOVA1003", "'fields' must be a list", [...path, key, "fields"]);
       } else {
         const fields: FieldSpec[] = [];

@@ -49,8 +49,8 @@ const PARSE_BODY = [
 export function emitHandlers(app: ResolvedApp, config: NovaConfig): EmittedFile {
   const e = new Emitter();
   e.line(HEADER).line();
-  if (app.loaders.length > 0) e.line(`import * as data from "${appRel(config, "data")}";`);
-  if (app.actions.length > 0) e.line(`import * as actions from "${appRel(config, "actions")}";`);
+  if (app.loaders.length > 0) e.line(`import * as data from "${appRel(app, config, "data")}";`);
+  if (app.actions.length > 0) e.line(`import * as actions from "${appRel(app, config, "actions")}";`);
   e.line();
   if (app.loaders.length > 0 || app.actions.length > 0) {
     e.lines(PRELUDE);

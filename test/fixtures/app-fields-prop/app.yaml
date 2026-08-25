@@ -1,0 +1,4 @@
+pages:
+  "/":
+    sections:
+      - ./roster#Roster: { fields: [name, role] }

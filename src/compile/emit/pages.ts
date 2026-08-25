@@ -191,7 +191,7 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     const names = [...new Set(byModule.get(module)!)].sort();
     e.line(`import { ${names.join(", ")} } from "${module}";`);
   }
-  if (app.computes.length > 0) e.line(`import * as compute from "${appRel(config, "compute")}";`);
+  if (app.computes.length > 0) e.line(`import * as compute from "${appRel(app, config, "compute")}";`);
   const { useAction, useFilters, useForm, useLoader, useSort } = hooksUsed(app);
   const hooks = [
     ...(useAction ? ["useAction"] : []),
@@ -247,20 +247,73 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
       // not the `string` a filter holds is reported there rather than at a generated line.
       e.line(`const filters = useFilters({ ${defaults} });`, [...path, "filters"]);
     }
+    // One sort state per page (NOVA1011 rejects a second sortable section), hoisted
+    // above the loaders because a loader that declares `sort`/`dir` reads it — a const
+    // referenced before its declaration is a ReferenceError, not a lint nit.
+    // `sortState` rather than `sort` so it does not collide with a filter or component
+    // named `sort` reading naturally in the same file.
+    if (pageNeedsSort(page)) e.line("const sortState = useSort();");
+
     // §6.2: "Loader inputs are supplied from route params and filter values." A route
     // param and a filter of the same name are the same input; the route param wins,
     // because it comes from the URL path rather than from a query string the user can
     // clear. Keys are sorted so the object is byte-identical across runs.
-    const queryEntries = new Map<string, string>();
-    for (const f of page.filters) queryEntries.set(f.name, `filters[${JSON.stringify(f.name)}]`);
-    for (const name of routeParams) queryEntries.set(name, paramLocal(name));
-    const query =
-      queryEntries.size === 0
-        ? "{}"
-        : `{ ${[...queryEntries.keys()]
-            .sort()
-            .map((k) => `${JSON.stringify(k)}: ${queryEntries.get(k)!}`)
-            .join(", ")} }`;
+    const available = new Map<string, string>();
+    for (const f of page.filters) available.set(f.name, `filters[${JSON.stringify(f.name)}]`);
+    for (const name of routeParams) available.set(name, paramLocal(name));
+
+    // Sort state is offered to a loader on exactly the terms a filter is, and reaches
+    // one only where the loader's own input type names `sort`/`dir`. That is the opt-in:
+    // a table holding all its rows sorts them in the browser and its loader says
+    // nothing, while a paginated one — where sorting the 25 rows on screen is a wrong
+    // answer about 6,480 — declares the two keys and is re-requested when they change.
+    // Making it automatic instead would re-request every table on every header click and
+    // hand the keys to loaders that have no idea what to do with them; making it new
+    // spec vocabulary would put the fact in the YAML rather than in the signature of the
+    // function that has to honour it, where TypeScript can no longer check it.
+    // NOVA1014 rejects a filter named `sort` or `dir` on such a page, so nothing here
+    // can be overwritten by one.
+    const sortValues = new Map<string, string>(
+      pageNeedsSort(page)
+        ? [
+            ["sort", '(sortState.value?.column ?? "")'],
+            ["dir", '(sortState.value?.direction ?? "asc")'],
+          ]
+        : [],
+    );
+
+    /**
+     * The input object one loader is called with: the keys *it* declares, and only
+     * those.
+     *
+     * Every loader used to be handed the page's whole filter set and route params, so a
+     * loader declaring nothing was re-requested on every filter change and a loader
+     * declaring one key was re-requested when an unrelated filter moved. On a reporting
+     * page with three filters and seven loaders that is seven requests per click, three
+     * of them for constant option lists. Where the parameter type has no closed set of
+     * keys to read (an index signature, a primitive, a generic) there is nothing to
+     * narrow by and the whole set is passed, exactly as before.
+     *
+     * A key the loader declares and the page cannot supply is still absent from the
+     * object, so it stays the NOVA3001 it always was, at the binding that named it.
+     */
+    function queryFor(loader: string): string {
+      // A zero-parameter loader is called with no argument at all (see handlers.ts), so
+      // the object exists only to satisfy `useLoader`'s signature. Anything in it is a
+      // dependency the loader never asked for and a refetch nobody wanted.
+      if (app.loaderArity[loader] === 0) return "{}";
+      const declared = app.loaderInputKeys[loader] ?? null;
+      const entries =
+        declared === null
+          ? [...available.keys()]
+          : declared.filter((k) => available.has(k) || sortValues.has(k));
+      if (entries.length === 0) return "{}";
+      return `{ ${entries
+        .sort()
+        .map((k) => `${JSON.stringify(k)}: ${available.get(k) ?? sortValues.get(k)!}`)
+        .join(", ")} }`;
+    }
+
     for (const name of used) {
       // The second type argument is what makes the assembled query object a checked
       // input rather than an untyped bag: `useLoader<T, Input>` takes
@@ -272,7 +325,7 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
       const typeArgs =
         app.loaderArity[name] === 0 ? `<${cap(name)}>` : `<${cap(name)}, ${cap(name)}Input>`;
       e.line(
-        `const ${name} = useLoader${typeArgs}("${urlFor(config, "_data", name)}", ${query});`,
+        `const ${name} = useLoader${typeArgs}("${urlFor(config, "_data", name)}", ${queryFor(name)});`,
         app.loaderOrigins[name],
       );
     }
@@ -289,10 +342,6 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
         app.actionOrigins[name],
       );
     }
-    // One sort state per page (NOVA1011 rejects a second sortable section), hoisted like
-    // every other hook. `sortState` rather than `sort` so it does not collide with a
-    // filter or component named `sort` reading naturally in the same file.
-    if (pageNeedsSort(page)) e.line("const sortState = useSort();");
     // One `useForm` per form, hoisted above the JSX like every other hook. The generic
     // is the action's own input type, which is what makes each field's `name` a checked
     // key of it — and makes the assembled initial-value object a completeness check on

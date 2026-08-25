@@ -1,4 +1,4 @@
-import { relative, sep } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import type { NovaConfig } from "../config.js";
 import type { ResolvedApp } from "../resolve.js";
 import { Emitter, type LineMap } from "./emitter.js";
@@ -15,8 +15,15 @@ export const rel = (config: NovaConfig, path: string) => `${path}${config.import
  * Specifier for a module that lives at the app root (`data.ts`, `actions.ts`,
  * `compute.ts`), as seen from the emitted output directory. `outDir` is one directory
  * name relative to the app root in the common case ("generated" → "../data"), but it may
- * be nested arbitrarily deep (e.g. "src/generated" → "../../data"), so the number of
- * "../" segments must track outDir's own depth rather than assume exactly one.
+ * be nested arbitrarily deep (e.g. "src/generated" → "../../data"), may escape the app
+ * directory, and may be absolute — so the path back must be computed from the two
+ * resolved directories rather than from `outDir`'s own text.
+ *
+ * It used to be `relative(config.outDir, ".")` — the app root approximated by
+ * `process.cwd()`. The two coincide only for an `outDir` nested inside the app *and* a
+ * build run from the app's parent, which is exactly the shape the reference consumer
+ * had, so the bug stayed invisible until an absolute `outDir` emitted
+ * `import ... from "../../../data"` at a directory that has no data.ts.
  *
  * Computed with `node:path.relative` — the same primitive `resolve.ts`'s
  * `specifierFromOutDir` uses for catalog/local-component specifiers — rather than by
@@ -26,16 +33,17 @@ export const rel = (config: NovaConfig, path: string) => `${path}${config.import
  * free, and keeps this computation from silently diverging from
  * `specifierFromOutDir`'s again.
  */
-export function appRel(config: NovaConfig, name: string): string {
-  const up = relative(config.outDir, ".").split(sep).join("/") || ".";
+export function appRel(app: ResolvedApp, config: NovaConfig, name: string): string {
+  const up =
+    relative(resolve(app.appDir, config.outDir), app.appDir).split(sep).join("/") || ".";
   return rel(config, `${up}/${name}`);
 }
 
 export function emitTypes(app: ResolvedApp, config: NovaConfig): EmittedFile {
   const e = new Emitter();
   e.line(HEADER).line();
-  if (app.loaders.length > 0) e.line(`import type * as data from "${appRel(config, "data")}";`);
-  if (app.actions.length > 0) e.line(`import type * as actions from "${appRel(config, "actions")}";`);
+  if (app.loaders.length > 0) e.line(`import type * as data from "${appRel(app, config, "data")}";`);
+  if (app.actions.length > 0) e.line(`import type * as actions from "${appRel(app, config, "actions")}";`);
   e.line();
   for (const name of app.loaders) {
     e.line(`export type ${cap(name)} = Awaited<ReturnType<typeof data.${name}>>;`);

@@ -1,4 +1,4 @@
-import { extname, join, relative, sep } from "node:path";
+import { extname, relative, resolve, sep } from "node:path";
 import { diagnostic, suggest, type Diagnostic, type SpecPath } from "../schema/diagnostic.js";
 import { componentKey, type AppSpec, type PageSpec, type PropValue, type SectionSpec } from "../schema/types.js";
 import { isComponentName, type Catalog } from "./catalog.js";
@@ -33,6 +33,16 @@ export type ModuleBinding = { name: string; module: string };
 
 export type ResolvedApp = {
   spec: AppSpec;
+  /**
+   * The app directory, resolved to an absolute path.
+   *
+   * Every emitted specifier back to the app's own modules is computed from it and the
+   * resolved `outDir`. It used to be computed from `process.cwd()` instead, which
+   * coincides with the app directory only for an `outDir` nested inside the app and a
+   * build run from the app's own parent — so an absolute or escaping `outDir` emitted
+   * imports that could not resolve.
+   */
+  appDir: string;
   components: ModuleBinding[];
   loaders: string[];
   actions: string[];
@@ -41,6 +51,13 @@ export type ResolvedApp = {
    * declared parameters (0) is called with no argument, and gets a plain `Input` type
    * instead of indexing into an empty `Parameters<...>` tuple. */
   loaderArity: Record<string, number>;
+  /**
+   * The keys each loader's declared input type actually names, or `null` where its
+   * parameter type has no closed set of them (an index signature, a primitive, a
+   * generic). The emitter builds that loader's query object from these, so a loader is
+   * re-requested only when something it declared a dependency on changed.
+   */
+  loaderInputKeys: Record<string, string[] | null>;
   /** Actions reached through a form's `submit:`, in sorted order. Only these need an
    * `${Cap}Input` type emitted, since only a form indexes into the action's input. */
   formActions: string[];
@@ -97,7 +114,7 @@ function exportsOf(
   session: ProgramSession | undefined,
 ): Map<string, Map<string, ExportInfo>> {
   const roots = EXPORT_BASES.flatMap((base) =>
-    EXPORT_EXTS.map((ext) => join(appDir, base + ext)),
+    EXPORT_EXTS.map((ext) => resolve(appDir, base + ext)),
   );
   const handle = createProgram({ tsconfigPath, roots, session });
 
@@ -106,9 +123,17 @@ function exportsOf(
     let exportsByName = new Map<string, ExportInfo>();
     if (handle) {
       for (const ext of EXPORT_EXTS) {
-        const file = join(appDir, base + ext);
+        const file = resolve(appDir, base + ext);
         if (handle.program.getSourceFile(file)) {
-          exportsByName = new Map(moduleExports(handle.program, file).map((e) => [e.name, e]));
+          exportsByName = new Map(
+            // `signatures` only for data.ts: a loader's declared input keys are what the
+            // emitter builds its query object from. actions.ts and compute.ts have no
+            // such use, and reading it would resolve types for nothing.
+            moduleExports(handle.program, file, { signatures: base === "data" }).map((e) => [
+              e.name,
+              e,
+            ]),
+          );
           break;
         }
       }
@@ -128,6 +153,7 @@ export function resolveApp(
   const actions = new Set<string>();
   const computes = new Set<string>();
   const loaderArity: Record<string, number> = {};
+  const loaderInputKeys: Record<string, string[] | null> = {};
   const formActions = new Set<string>();
   const actionArity: Record<string, number> = {};
   const componentTypeParams: Record<string, { total: number; required: number }> = {};
@@ -175,7 +201,7 @@ export function resolveApp(
   // resolve independently of file depth.
   function specifierFromOutDir(specifier: string, resolvedFile: string): string {
     if (!specifier.startsWith(".")) return specifier;
-    const outDir = join(ctx.appDir, ctx.config.outDir);
+    const outDir = resolve(ctx.appDir, ctx.config.outDir);
     const noExt = resolvedFile.slice(0, resolvedFile.length - extname(resolvedFile).length);
     const rel = relative(outDir, noExt).split(sep).join("/");
     return rel.startsWith(".") ? rel : `./${rel}`;
@@ -311,6 +337,7 @@ export function resolveApp(
       ? null
       : {
           spec,
+          appDir: resolve(ctx.appDir),
           components: [...components.values()].sort((a, b) =>
             a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
           ),
@@ -318,6 +345,7 @@ export function resolveApp(
           actions: sorted(actions),
           computes: sorted(computes),
           loaderArity,
+          loaderInputKeys,
           formActions: sorted(formActions),
           actionArity,
           componentTypeParams,
@@ -462,6 +490,7 @@ export function resolveApp(
           loaders.add(ref.name);
           if (loaderArity[ref.name] === undefined) {
             loaderArity[ref.name] = dataExports.get(ref.name)!.paramCount;
+            loaderInputKeys[ref.name] = dataExports.get(ref.name)!.paramKeys;
           }
           if (loaderOrigins[ref.name] === undefined) loaderOrigins[ref.name] = [...at, propName];
         }

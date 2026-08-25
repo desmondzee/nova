@@ -10,6 +10,19 @@ export type ExportInfo = {
   /** Parameter count of the first call signature, or 0 when the export isn't callable. */
   paramCount: number;
   /**
+   * Property names of the first parameter's type, when that type is an object with a
+   * known, closed set of them — `null` otherwise (a primitive parameter, a type with a
+   * string index signature, an export with no parameters, or an export nobody asked
+   * about).
+   *
+   * Read for one reason: a loader is called with an input object nova assembles, and
+   * assembling it from *everything* the page has means a loader declaring `{ region }`
+   * is re-requested when an unrelated filter moves and a loader declaring nothing at all
+   * is re-requested on every keystroke. The loader's own signature is the statement of
+   * what it depends on; this is how the emitter reads it.
+   */
+  paramKeys: string[] | null;
+  /**
    * Type parameters of the first call signature: how many there are, and how many carry
    * no default (so must be written if a type argument list is written at all).
    *
@@ -139,7 +152,38 @@ export function createProgram(opts: {
   };
 }
 
-export function moduleExports(program: ts.Program, file: string): ExportInfo[] {
+/**
+ * The property names of a call signature's first parameter, or null where there is no
+ * closed set of them to name.
+ *
+ * A string index signature means the type accepts keys nobody declared, so narrowing an
+ * assembled input object to the declared ones would silently drop values the callee can
+ * legitimately read — `null` keeps the caller's existing behaviour there. A parameter
+ * that is a primitive, a union, or generic likewise yields nothing to narrow by.
+ */
+function firstParamKeys(checker: ts.TypeChecker, signature: ts.Signature): string[] | null {
+  const parameter = signature.parameters[0];
+  if (!parameter) return null;
+  const declaration = parameter.valueDeclaration ?? parameter.declarations?.[0];
+  if (!declaration) return null;
+  const type = checker.getTypeOfSymbolAtLocation(parameter, declaration);
+  if (type.isUnionOrIntersection() || type.flags & ts.TypeFlags.TypeParameter) return null;
+  if (checker.getIndexInfoOfType(type, ts.IndexKind.String) !== undefined) return null;
+  const properties = checker.getPropertiesOfType(type);
+  if (properties.length === 0) return null;
+  return properties.map((p) => p.getName()).sort();
+}
+
+/**
+ * @param opts.signatures - Read the first parameter's property names too. Off by
+ * default: only `data.ts` needs it, and asking for it would make every catalog export's
+ * props type resolve on a host catalog of hundreds of components for nothing.
+ */
+export function moduleExports(
+  program: ts.Program,
+  file: string,
+  opts: { signatures?: boolean } = {},
+): ExportInfo[] {
   const source = program.getSourceFile(file);
   if (!source) return [];
   const checker = program.getTypeChecker();
@@ -162,6 +206,10 @@ export function moduleExports(program: ts.Program, file: string): ExportInfo[] {
       line: line + 1,
       col: character + 1,
       paramCount: callSignatures[0]?.parameters.length ?? 0,
+      paramKeys:
+        opts.signatures && callSignatures[0]
+          ? firstParamKeys(checker, callSignatures[0])
+          : null,
       typeParams: {
         total: typeParams?.length ?? 0,
         required:

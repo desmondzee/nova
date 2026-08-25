@@ -1,0 +1,9 @@
+pages:
+  "/":
+    filters:
+      month: { default: "2026-08" }
+      region: { default: north }
+    sections:
+      - StatCard: { label: This month, value: data#monthlyTotal }
+      - Table: { rows: data#regions, columns: [name], empty: No regions }
+      - FilterBar: { label: Region, value: filters.region, onChange: filters.region.set }

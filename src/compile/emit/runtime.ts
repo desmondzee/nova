@@ -62,6 +62,18 @@ const USE_LOADER = [
   "}",
 ];
 
+const HREF = [
+  "/**",
+  " * The URL to write for a new query string, keeping everything else about the",
+  " * location. The fragment in particular: a hash-routed SPA — the ordinary choice for a",
+  " * statically hosted app — keeps its whole route there, and writing",
+  " * `pathname + '?' + search` destroyed it the moment a filter or a column was touched.",
+  " */",
+  "function href(search: URLSearchParams): string {",
+  "  return `${window.location.pathname}?${search.toString()}${window.location.hash}`;",
+  "}",
+];
+
 const USE_FILTERS = [
   "/**",
   " * Filter values, kept in the query string so a refresh preserves them.",
@@ -97,7 +109,7 @@ const USE_FILTERS = [
   "  const set = React.useCallback((name: K, value: string) => {",
   "    const search = new URLSearchParams(window.location.search);",
   "    search.set(name, value);",
-  "    window.history.replaceState(null, '', `${window.location.pathname}?${search.toString()}`);",
+  "    window.history.replaceState(null, '', href(search));",
   "    setValues((v) => ({ ...v, [name]: value }));",
   "  }, []);",
   "",
@@ -203,7 +215,7 @@ const USE_SORT = [
   "      search.get('sort') === column && search.get('dir') !== 'desc' ? 'desc' : 'asc';",
   "    search.set('sort', column);",
   "    search.set('dir', direction);",
-  "    window.history.replaceState(null, '', `${window.location.pathname}?${search.toString()}`);",
+  "    window.history.replaceState(null, '', href(search));",
   "    setValue({ column, direction });",
   "  }, []);",
   "",
@@ -273,6 +285,10 @@ export function emitRuntime(app: ResolvedApp, _config: NovaConfig): EmittedFile 
 
   const body = [
     ...(hooks.useLoader ? [USE_LOADER] : []),
+    // Shared by the two hooks that write the query string, and emitted only where one of
+    // them is — a module carrying a function nothing calls fails a host with
+    // `noUnusedLocals`, which is the same rule every hook here is chosen by.
+    ...(hooks.useFilters || hooks.useSort ? [HREF] : []),
     ...(hooks.useFilters ? [USE_FILTERS] : []),
     ...(hooks.useSort ? [USE_SORT] : []),
     // useForm submits through useAction, so a form pulls it in even when no page calls

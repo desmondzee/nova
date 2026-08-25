@@ -1,0 +1,7 @@
+pages:
+  "/":
+    sections:
+      - ./grid#Grid:
+          feed: data#trips
+          cols: [date, km]
+          sortable: [date, km]

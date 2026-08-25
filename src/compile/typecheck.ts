@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { resolve } from "node:path";
 import ts from "typescript";
 import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
 import type { EmittedFile } from "./emit/types.js";
@@ -32,6 +32,13 @@ import { createProgram, type ProgramSession } from "./program.js";
  * covers not just type errors but malformed output — an unbalanced brace, a bad
  * template edge case, an unescaped quote from a spec string literal — since TypeScript
  * reporting a problem in emitted output is exactly what both codes mean.
+ *
+ * `outDir` may be given relative; it is resolved here rather than trusted. Every path
+ * this stage compares against a `ts.SourceFile.fileName` has to be absolute, because
+ * TypeScript's are always absolute — a relative one matches nothing, and matching
+ * nothing here means reporting nothing at all while answering `ok: true`. That is the
+ * one failure this file must not be able to have, so the resolution happens at the only
+ * place the keys are built rather than at each of its callers.
  */
 export function typecheckEmitted(opts: {
   files: EmittedFile[];
@@ -40,7 +47,7 @@ export function typecheckEmitted(opts: {
   positions: PositionMap;
   session?: ProgramSession;
 }): Diagnostic[] {
-  const paths = opts.files.map((f) => join(opts.outDir, f.name));
+  const paths = opts.files.map((f) => resolve(opts.outDir, f.name));
   const handle = createProgram({
     tsconfigPath: opts.tsconfigPath,
     roots: paths,
