@@ -19,7 +19,10 @@ const HANDLERS_TYPE =
  *
  * `body` is where the status vocabulary earns itself twice: `req.json()` rejects on a
  * malformed body, which is the caller's mistake and was being reported as a server
- * error, so it is thrown as a 400 and answered by the same path.
+ * error, so it is thrown as a 400 and answered by the same path. The non-object check
+ * beside it is the same defect one step further on — `JSON.parse('null')` succeeds, and
+ * `null` then met an action expecting an object and threw on its first property access,
+ * which a host answers as a 500.
  */
 const PRELUDE = [
   "/** Run a handler's body, answering with the status a thrown error asks for. */",
@@ -27,8 +30,7 @@ const PRELUDE = [
   "  try {",
   "    return Response.json(await run());",
   "  } catch (err: unknown) {",
-  "    // No status is not a 500 to invent here — it is a failure this app did not",
-  "    // describe, and the host is what logs and answers those.",
+  "    // No status is a fault this app did not describe: the host answers those.",
   "    const status = (err as { status?: unknown } | null)?.status;",
   "    if (typeof status !== 'number' || status < 400 || status > 599) throw err;",
   "    const error = err instanceof Error ? err.message : String(err);",
@@ -47,10 +49,8 @@ const PARSE_BODY = [
   "  const value: unknown = await req.json().catch(() => {",
   "    throw invalidBody();",
   "  });",
-  "  // `JSON.parse('null')` succeeds, and so does `12`, `\"x\"` and `true` — all of them",
-  "  // then met an action expecting an object and threw on its first property access,",
-  "  // which the host answered as a 500. An action's declared input is an object type;",
-  "  // that is exactly what the `as never` below asserts and nothing else checked.",
+  "  // `JSON.parse` accepts `null`, `12`, `\"x\"` and `true`; an action's input is an",
+  "  // object, which is what the `as never` below asserts and nothing else checked.",
   "  if (typeof value !== 'object' || value === null) throw invalidBody();",
   "  return value;",
   "};",

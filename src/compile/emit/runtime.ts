@@ -4,19 +4,32 @@ import { Emitter } from "./emitter.js";
 import { hooksUsed } from "./pages.js";
 import { HEADER, type EmittedFile } from "./types.js";
 
+/**
+ * Every emitted docblock in this file is deliberately brief, and the reasoning behind
+ * each hook lives here — in the compiler — rather than in the string it emits. The
+ * distinction is what the two copies cost: a line here is written once, a line in the
+ * arrays below is committed into every app's `generated/runtime.tsx`, and these six
+ * blocks were ~2,800 lines of identical prose across the 38-app host this was built for.
+ * Nothing was dropped; the paragraphs a reviewer or a future editor needs are all still
+ * below, next to the code they are about.
+ *
+ * `useLoader`: `Input` is the loader's own declared parameter type, so the query object
+ * nova assembles from the page's route params and filter values has to satisfy it — a
+ * loader input that no param or filter supplies is a compile error at the call site
+ * rather than a request that fails at runtime. It defaults to `unknown` (which
+ * intersects away) for a loader declared with no parameters at all.
+ *
+ * The `!r.ok` branch reads the response body before it throws, and must keep doing so:
+ * the handler answers `{ ok: false, error }` for a thrown error carrying a status, and
+ * discarding that body is what turned `This trip no longer exists.` into
+ * `500 Internal Server Error`. The status line is only the fallback.
+ */
 const USE_LOADER = [
   "export type LoaderState<T> = { loading: boolean; error: string | null; value: T | null };",
   "",
   "/**",
   " * Fetch JSON, discarding responses that arrive after a newer request started.",
-  " *",
-  " * `Input` is the loader's own declared parameter type. The query object nova builds",
-  " * from the page's route params and filter values must satisfy it, so a loader input",
-  " * that no param or filter supplies is a compile error at the call site rather than a",
-  " * request that fails at runtime. It defaults to `unknown` (which intersects away) for",
-  " * a loader declared with no parameters at all.",
-  " *",
-  " * `reload()` re-requests the same URL — what a section's `refreshes:` calls on success.",
+  " * `Input` is the loader's own parameter type; `reload()` re-requests the same URL.",
   " */",
   "export function useLoader<T, Input = unknown>(",
   "  path: string,",
@@ -38,10 +51,7 @@ const USE_LOADER = [
   "    fetch(url, { headers: { accept: 'application/json' } })",
   "      .then(async (r) => {",
   "        if (!r.ok) {",
-  "          // The failure the loader itself described, where it described one: the",
-  "          // handler answers `{ ok: false, error }` for a thrown error carrying a",
-  "          // status, and discarding that body is what turned `This trip no longer",
-  "          // exists.` into `500 Internal Server Error`. The status is the fallback.",
+  "          // The failure the loader itself described, where it described one.",
   "          const failed = (await r.json().catch(() => null)) as { error?: unknown } | null;",
   "          throw new Error(",
   "            typeof failed?.error === 'string' ? failed.error : `${r.status} ${r.statusText}`,",
@@ -62,28 +72,34 @@ const USE_LOADER = [
   "}",
 ];
 
+/**
+ * The fragment is the part of this that is not obvious and must not be dropped: a
+ * hash-routed SPA — the ordinary choice for a statically hosted app — keeps its whole
+ * route there, and writing `pathname + '?' + search` destroyed it the moment a filter or
+ * a column was touched.
+ */
 const HREF = [
-  "/**",
-  " * The URL to write for a new query string, keeping everything else about the",
-  " * location. The fragment in particular: a hash-routed SPA — the ordinary choice for a",
-  " * statically hosted app — keeps its whole route there, and writing",
-  " * `pathname + '?' + search` destroyed it the moment a filter or a column was touched.",
-  " */",
+  "/** The URL for a new query string, keeping the path and the fragment. */",
   "function href(search: URLSearchParams): string {",
   "  return `${window.location.pathname}?${search.toString()}${window.location.hash}`;",
   "}",
 ];
 
+/**
+ * Two things here are load-bearing and look like they could be simplified.
+ *
+ * The return type is keyed by the filter names the caller declares rather than by an
+ * open index signature, so `filters.month` is a `string` — not `string | undefined` — on
+ * a host that turns on `noUncheckedIndexedAccess`.
+ *
+ * And the state is seeded from the defaults and reconciled with the URL *inside the
+ * effect*, never in the `useState` initialiser: a client component is server-rendered
+ * first, where reading `window` is a 500 rather than a hydration warning.
+ */
 const USE_FILTERS = [
   "/**",
-  " * Filter values, kept in the query string so a refresh preserves them.",
-  " *",
-  " * Keyed by the filter names the caller declares, not by an open index signature, so",
-  " * `filters.month` is a `string` — not `string | undefined` — on a host that turns on",
-  " * `noUncheckedIndexedAccess`.",
-  " *",
-  " * Seeded from the defaults and reconciled with the URL inside the effect: a client",
-  " * component is server-rendered first, where reading `window` would throw.",
+  " * Filter values, kept in the query string so a refresh preserves them. Keyed by the",
+  " * declared names, and seeded from the defaults until the effect reads the URL.",
   " */",
   "export function useFilters<K extends string>(",
   "  defaults: Record<K, string>,",
@@ -120,25 +136,32 @@ const USE_FILTERS = [
   "}",
 ];
 
+/**
+ * `Input` is the action's own declared parameter type, and `run` is declared as a
+ * *property* rather than a method so that parameter is checked contravariantly: bound to
+ * a component prop, it is then accepted only by a callback whose argument the action can
+ * actually take. Writing it as `run(input: Input)` makes the check bivariant and gives
+ * that away silently.
+ *
+ * `Result` is the action's own declared return type, and `run` resolves it rather than a
+ * verdict nova reduced it to. An action that succeeds while reporting something
+ * recoverable (`{ ok: true, warning }`) reads as a plain success under a boolean, so a
+ * submission the upstream had accepted was shown to the reader as a failure, with the
+ * row already written and the list un-refreshed behind it. `null` is the action having
+ * given no answer at all — the confirmation was declined, or the request failed — and
+ * the message for that is in `error`.
+ *
+ * `refresh` runs only where the action reports ok: field errors changed nothing, so
+ * re-reading would be a request for the same rows.
+ */
 const USE_ACTION = [
   "export type ActionState = { busy: boolean; error: string | null; fieldErrors: Record<string, string> };",
   "",
   "/**",
-  " * Submit to an action endpoint, with optional confirmation and field errors.",
+  " * Submit to an action endpoint, with optional confirmation and refresh.",
   " *",
-  " * `refresh` runs only when the action reports ok — field errors changed nothing — and",
-  " * is how a section's `refreshes:` re-reads what the submission invalidated.",
-  " *",
-  " * `Input` is the action's own declared parameter type, and `run` is a property rather",
-  " * than a method so its parameter is checked contravariantly: bound to a component",
-  " * prop, it is accepted only by a callback whose argument the action can take.",
-  " *",
-  " * `Result` is the action's own declared *return* type, and `run` resolves it — not a",
-  " * verdict nova reduced it to. An action that succeeds while reporting something",
-  " * recoverable (`{ ok: true, warning }`) reads as a plain success under a boolean, so a",
-  " * submission the upstream had accepted was shown to the reader as a failure. `null` is",
-  " * the action having given no answer at all: the confirmation was declined, or the",
-  " * request itself failed — and the message for that is in `error`.",
+  " * `run` resolves the action's own result, or `null` where it gave no answer at all —",
+  " * the confirmation was declined, or the request failed, and the message is in `error`.",
   " */",
   "export function useAction<Input = unknown, Result = unknown>(",
   "  path: string,",
@@ -160,18 +183,14 @@ const USE_ACTION = [
   "          body: JSON.stringify(input),",
   "        });",
   "        if (!r.ok) {",
-  "          // The refusal the action itself wrote, where it wrote one — an action that",
-  "          // throws `Object.assign(new Error('You may not.'), { status: 403 })` gets",
-  "          // that status *and* that sentence, instead of a bare `403 Forbidden`. The",
-  "          // same body `useLoader` reads, for the same reason.",
+  "          // The refusal the action itself wrote, where it wrote one.",
   "          const failed = (await r.json().catch(() => null)) as { error?: unknown } | null;",
   "          throw new Error(",
   "            typeof failed?.error === 'string' ? failed.error : `${r.status} ${r.statusText}`,",
   "          );",
   "        }",
   "        const answer: unknown = await r.json();",
-  "        // `ok` and `fieldErrors` are the two keys this hook reads for itself; every",
-  "        // other key of the answer is the caller's business and is handed on untouched.",
+  "        // The two keys this hook reads; every other one is handed on untouched.",
   "        const shape = answer as { ok?: unknown; fieldErrors?: Record<string, string> } | null;",
   "        if (shape?.ok === true) {",
   "          setState({ busy: false, error: null, fieldErrors: {} });",
@@ -195,16 +214,17 @@ const USE_ACTION = [
   "}",
 ];
 
+/**
+ * Ordering the rows is the table component's business (D3); this owns only the state and
+ * its round trip through the URL. Seeded unsorted and reconciled with the URL inside the
+ * effect, for the server-render reason `useFilters` is.
+ */
 const USE_SORT = [
   "export type SortState = { column: string; direction: 'asc' | 'desc' } | null;",
   "",
   "/**",
-  " * Which column a page is sorted by, kept in the query string beside its filters so a",
-  " * refresh preserves it. Selecting the current column reverses it.",
-  " *",
-  " * Ordering the rows is the table component's business; this owns only the state and",
-  " * its round trip through the URL. Seeded unsorted and reconciled with the URL in the",
-  " * effect, for the server-render reason `useFilters` is.",
+  " * The column a page is sorted by, kept in the query string beside its filters.",
+  " * Selecting the current column reverses it; ordering the rows is the component's job.",
   " */",
   "export function useSort(): { value: SortState; set(column: string): void } {",
   "  const read = React.useCallback((): SortState => {",
@@ -223,9 +243,8 @@ const USE_SORT = [
   "    return () => window.removeEventListener('popstate', onPop);",
   "  }, [read]);",
   "",
-  "  // The URL is the source of truth for the direction to flip, so this reads it rather",
-  "  // than a setState updater — an updater may be re-run, and writing history from",
-  "  // inside one would push the same toggle twice.",
+  "  // The URL decides the direction to flip, not a setState updater: an updater may be",
+  "  // re-run, and writing history from inside one pushes the same toggle twice.",
   "  const set = React.useCallback((column: string) => {",
   "    const search = new URLSearchParams(window.location.search);",
   "    const direction =",
@@ -240,17 +259,21 @@ const USE_SORT = [
   "}",
 ];
 
+/**
+ * `T` is the action's own declared input type, so `values[k]` and `set(k, v)` are
+ * checked against it: a field naming a key the action does not accept, or bound to a
+ * component whose value type does not match the key's, is a compile error at that
+ * field's own spec line. This is the whole of the form check, and it is TypeScript's
+ * rather than a comparator nova maintains.
+ *
+ * The constraint is `T extends object` rather than `Record<string, unknown>` on purpose:
+ * an interface gets no implicit index signature, so the stricter constraint would reject
+ * an action whose input is declared as one, which is entirely ordinary.
+ */
 const USE_FORM = [
   "/**",
-  " * One form's values, per-field errors, busy state and submission.",
-  " *",
-  " * `T` is the action's own declared input type, so `values[k]` and `set(k, v)` are",
-  " * checked against it: a field naming a key the action does not accept, or bound to a",
-  " * component whose value type does not match the key's, is a compile error.",
-  " *",
-  " * `T extends object` rather than `Record<string, unknown>` — an interface gets no",
-  " * implicit index signature, so the stricter constraint would reject an action whose",
-  " * input is declared as one, which is entirely ordinary.",
+  " * One form's values, per-field errors, busy state and submission. `T` is the action's",
+  " * own input type, so `values[k]` and `set(k, v)` are checked against it.",
   " */",
   "export function useForm<T extends object>(",
   "  path: string,",
@@ -265,8 +288,7 @@ const USE_FORM = [
   "  submit(): Promise<boolean>;",
   "} {",
   "  // A form needs one bit of the answer — whether the submission stood — and reads it",
-  "  // off the action's own `ok`. The per-field errors are cleared by useAction's state,",
-  "  // as they always were; this is only the verdict `submit` hands the form component.",
+  "  // off the action's own `ok`.",
   "  const action = useAction<T, { ok?: unknown }>(path, opts);",
   "  const [values, setValues] = React.useState<T>(initial);",
   "  const set = React.useCallback(<K extends keyof T & string>(key: K, value: T[K]): void => {",
@@ -278,9 +300,8 @@ const USE_FORM = [
   "  );",
   "  return {",
   "    values,",
-  "    // The action reports errors keyed by whatever strings it likes. That they are T's",
-  "    // keys is the one thing here TypeScript cannot know, so it is asserted once, here,",
-  "    // rather than at every field.",
+  "    // That the action's error keys are T's is the one thing TypeScript cannot know,",
+  "    // so it is asserted once here rather than at every field.",
   "    errors: action.fieldErrors as Partial<Record<keyof T & string, string>>,",
   "    busy: action.busy,",
   "    error: action.error,",
