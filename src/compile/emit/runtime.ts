@@ -8,10 +8,10 @@ import { HEADER, type EmittedFile } from "./types.js";
  * Every emitted docblock in this file is deliberately brief, and the reasoning behind
  * each hook lives here — in the compiler — rather than in the string it emits. The
  * distinction is what the two copies cost: a line here is written once, a line in the
- * arrays below is committed into every app's `generated/runtime.tsx`, and these six
- * blocks were ~2,800 lines of identical prose across the 38-app host this was built for.
- * Nothing was dropped; the paragraphs a reviewer or a future editor needs are all still
- * below, next to the code they are about.
+ * arrays below is committed into every app's `generated/runtime.tsx`. The emitted
+ * comments were 72 to 83 lines per app, about a third of the file, identical in all of
+ * them; they are 27 to 33 now. Nothing was lost — every paragraph that was doing work is
+ * still here, beside the code it is about.
  *
  * `useLoader`: `Input` is the loader's own declared parameter type, so the query object
  * nova assembles from the page's route params and filter values has to satisfy it — a
