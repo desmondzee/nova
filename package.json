@@ -1,6 +1,26 @@
 {
   "name": "@desmondzee/nova",
   "version": "0.2.0",
+  "description": "A build-time compiler that turns a declarative YAML description of an app's UI into React pages and HTTP handlers, typechecked against your own code.",
+  "keywords": [
+    "codegen",
+    "compiler",
+    "react",
+    "yaml",
+    "typescript",
+    "ui",
+    "forms",
+    "internal-tools"
+  ],
+  "author": "Desmond Zee",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/desmondzee/nova.git"
+  },
+  "homepage": "https://github.com/desmondzee/nova#readme",
+  "bugs": {
+    "url": "https://github.com/desmondzee/nova/issues"
+  },
   "license": "MIT",
   "type": "module",
   "engines": {
