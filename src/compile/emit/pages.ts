@@ -573,8 +573,9 @@ export function hooksUsed(app: ResolvedApp): {
   return {
     // "the app has actions" is not the same question: a form's action is submitted
     // through `useForm`, so a page whose only action is a form's binds no `useAction`
-    // of its own and must not import one.
-    useAction: app.spec.pages.some((p) => collect(p.sections, "actions").length > 0),
+    // of its own and must not import one. `propActions` is exactly that set, recorded
+    // where the binding was resolved rather than counted again from the sections here.
+    useAction: app.propActions.length > 0,
     useFilters: app.spec.pages.some(pageNeedsFilters),
     useForm: app.formActions.length > 0,
     useLoader: app.loaders.length > 0,
