@@ -178,8 +178,12 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
 /** The page components themselves: the `"use client"` half of the emitted pair. */
 export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
   const e = new Emitter();
-  /** Loaders whose failure this page has already stated once. Reset per page; see gate. */
-  let announced = new Set<string>();
+  /**
+   * Loaders whose failure this page has already stated, and the condition under which
+   * that statement is actually on screen — `null` for "unconditionally". Reset per page;
+   * see `gate` and `visibilityOf`.
+   */
+  let announced = new Map<string, string | null>();
   const byModule = new Map<string, string[]>();
   for (const c of app.components) {
     byModule.set(c.module, [...(byModule.get(c.module) ?? []), c.name]);
@@ -399,9 +403,9 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.indent();
     // One page, one notice per failed loader — see `gate`. Reset here because the set is
     // about a page's own screen, and filled in emission order, which is document order.
-    announced = new Set<string>();
+    announced = new Map<string, string | null>();
     page.sections.forEach((section, i) => {
-      emitSection(section, [...path, "sections", i]);
+      emitSection(section, [...path, "sections", i], null);
     });
     e.dedent().line(close).dedent();
     e.line(");");
@@ -432,35 +436,74 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
    * from receiving `null` and a wrong-typed binding a compile error at the spec line;
    * nothing here casts.
    *
-   * **One loader's failure is stated once.** The section is the unit that *degrades*; it
-   * is not the unit a failure is reported in. A detail page hangs five sections off one
-   * loader and printed the same sentence four times; a report page printed six. The first
-   * section (in document order) that binds a loader renders its notice, and every later
-   * section binding the same failed loader renders nothing at all — it has no data, and
-   * the reason has already been given above it. The loading state is deliberately *not*
-   * deduplicated: a spinner marks where a section will be, and four of them is what a
-   * page still arriving looks like, whereas four copies of one sentence is one fact
-   * asserted four times.
+   * **One loader's failure is stated once, and never zero times.** The section is the
+   * unit that *degrades*; it is not the unit a failure is reported in. A detail page
+   * hangs five sections off one loader and printed the same sentence four times; a report
+   * page printed six. The first section (in document order) that binds a loader renders
+   * its notice, and every later section binding the same failed loader renders nothing at
+   * all — it has no data, and the reason has already been given above it. The loading
+   * state is deliberately *not* deduplicated: a spinner marks where a section will be,
+   * and four of them is what a page still arriving looks like, whereas four copies of one
+   * sentence is one fact asserted four times.
+   *
+   * "Above it" is the part that needed care. A section nested inside a parent gated by a
+   * *different* loader only renders when that parent's own data arrived — so when the
+   * announcing section was a nested one, the announcement could be made by a section that
+   * is not on screen, and every later section binding the same failed loader emitted
+   * `null` against a sentence nobody could read. Two loaders failing then produced one
+   * notice, and the second failure was reported nowhere on the page.
+   *
+   * So an announcement carries the condition under which it is visible — the conjunction
+   * of every gated ancestor's "arrived" test, or `null` where there are no gated
+   * ancestors — and a later section binding an already-announced loader emits its notice
+   * *behind the negation of that condition* rather than dropping it. Exactly one notice
+   * per failed loader either way; the dedup is now conditional rather than positional.
    */
-  function gate(section: SectionSpec): { open: string; close: string } {
+  function gate(section: SectionSpec, visible: string | null): { open: string; close: string } {
     const loaders = ownLoaders(section);
     if (loaders.length === 0) return { open: "", close: "" };
+    const notice = (n: string) =>
+      `<${config.states.error}>{${n}.error}</${config.states.error}>`;
     const failed = loaders
       .map((n) => {
-        const notice = announced.has(n)
-          ? "null"
-          : `<${config.states.error}>{${n}.error}</${config.states.error}>`;
-        announced.add(n);
-        return `${n}.error !== null ? ${notice} : `;
+        if (!announced.has(n)) {
+          announced.set(n, visible);
+          return `${n}.error !== null ? ${notice(n)} : `;
+        }
+        const shownWhen = announced.get(n)!;
+        // Already stated where nothing can hide it.
+        if (shownWhen === null) return `${n}.error !== null ? null : `;
+        // Stated behind a condition: say it here when that statement is not on screen.
+        // Between the two, the sentence is now shown when `shownWhen || visible` holds —
+        // which is unconditional as soon as one binder has no gated ancestor.
+        announced.set(n, visible === null ? null : `(${shownWhen}) || (${visible})`);
+        return `${n}.error !== null ? (${shownWhen} ? null : ${notice(n)}) : `;
       })
       .join("");
     const waiting = loaders.map((n) => `${n}.value === null`).join(" || ");
     return { open: `{${failed}${waiting} ? <${config.states.loading} /> : `, close: "}" };
   }
 
-  function emitSection(section: SectionSpec, path: SpecPath): void {
+  /**
+   * The test that a section's own children are on screen: its gate renders them only
+   * once every loader it binds itself has arrived without failing. `null` where the
+   * section gates nothing, so nesting inside it hides nothing.
+   */
+  function passes(section: SectionSpec): string | null {
+    const loaders = ownLoaders(section);
+    if (loaders.length === 0) return null;
+    return loaders.map((n) => `${n}.error === null && ${n}.value !== null`).join(" && ");
+  }
+
+  /** Both conditions, skipping the vacuous ones. Hoisted, because `emitSection` runs
+   * during the `pages.forEach` above this point in the file. */
+  function both(a: string | null, b: string | null): string | null {
+    return a === null ? b : b === null ? a : `${a} && ${b}`;
+  }
+
+  function emitSection(section: SectionSpec, path: SpecPath, visible: string | null): void {
     const name = section.component.name;
-    const { open: before, close: after } = gate(section);
+    const { open: before, close: after } = gate(section, visible);
     const entries = new Map<string, string>();
     for (const p of Object.keys(section.props)) entries.set(p, expr(section.props[p]!));
     if (section.submit !== undefined) {
@@ -493,7 +536,10 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     fields.forEach((field, i) => {
       emitField(field, section.submit!, [...path, key, "fields", i]);
     });
-    section.children.forEach((child, i) => emitSection(child, [...path, key, "children", i]));
+    const inner = both(visible, passes(section));
+    section.children.forEach((child, i) =>
+      emitSection(child, [...path, key, "children", i], inner),
+    );
     e.dedent();
     e.line(`</${name}>${after}`, path);
   }

@@ -1,0 +1,13 @@
+pages:
+  "/":
+    title: Nested
+    sections:
+      - Panel:
+          title: data#heading
+          children:
+            - Table:
+                rows: data#trips
+                columns: [date, km]
+      - Breakdown:
+          rows: data#trips
+          columns: [date, km]

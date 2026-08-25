@@ -279,6 +279,44 @@ describe("§7.1 one failed loader reads once, however many sections bind it", ()
     expect(names.filter((n) => n === "ErrorNotice")).toHaveLength(2);
   });
 
+  /**
+   * The dedup's own defect. `gate()` marked a loader "announced" the first time any
+   * section bound it, in document order — including a section nested inside a parent
+   * gated by a *different* loader. When the parent fails, its children are never
+   * rendered, so the announcement was made by a section that is not on screen, and every
+   * later section binding the same failed loader emitted `null`. Two failures, one
+   * notice, and the second failure reported nowhere at all.
+   */
+  it("announces a failure a nested section could not announce", async () => {
+    const appDir = app("app-nested-gate");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    const views = fileOf(result.files, "views.tsx");
+
+    const shown = renderPage(views, {
+      heading: failed("heading is gone"),
+      trips: failed("trips is gone"),
+    });
+    // The Panel states its own failure; the Breakdown states the one the Table inside
+    // the Panel never got the chance to.
+    expect(shown.map((c) => c.name)).toEqual(["ErrorNotice", "ErrorNotice"]);
+    expect(shown.flatMap((c) => c.children)).toEqual(["heading is gone", "trips is gone"]);
+  });
+
+  it("still says it exactly once when the nested announcer does render", async () => {
+    const appDir = app("app-nested-gate");
+    const result = await compileApp(appDir, configFor(appDir));
+    const shown = renderPage(fileOf(result.files, "views.tsx"), {
+      heading: ok("Activity"),
+      trips: failed("trips is gone"),
+    });
+    // The Panel renders, so the notice inside it is on screen — and the later Breakdown
+    // stays silent, because the dedup is conditional on that, not abandoned. One notice,
+    // in the position of the first section that bound the failed loader.
+    expect(shown.map((c) => c.name)).toEqual(["Panel", "ErrorNotice"]);
+    expect(shown[1]!.children).toEqual(["trips is gone"]);
+  });
+
   it("leaves the loading state per section, because a placeholder is not a sentence", async () => {
     // Deliberately not deduplicated: `Loading` marks where a section will be, and four
     // spinners in four places is what a page that is still arriving looks like. Four

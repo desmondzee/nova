@@ -634,6 +634,23 @@ not deduplicated: a spinner marks where a section will be, and four of them in f
 is what a page still arriving looks like, whereas four copies of one sentence is one fact
 asserted four times.
 
+**And stated at least once.** "Already on the screen above it" is not automatic when the
+section that stated it is nested inside a section gated by a *different* loader: that
+parent renders its own notice instead of its children, so the announcement is inside
+something nobody can see. So an announcement made from inside a gate is remembered
+together with the condition under which it is visible, and a later section binding the
+same failed loader states the failure itself when that condition does not hold:
+
+```tsx
+{trips.error !== null
+  ? (heading.error === null && heading.value !== null ? null   {/* said inside the Panel */}
+     : <ErrorNotice>{trips.error}</ErrorNotice>)               {/* the Panel is not there */}
+  : trips.value === null ? <Loading /> : <Breakdown rows={trips.value} … />}
+```
+
+Still exactly one notice per failed loader in every combination — the deduplication is
+conditional rather than positional.
+
 **A section that holds controls should not bind data it does not need.** If the card
 carrying your date pickers also binds the report those pickers scope, a bad date range
 takes the card with it and the reader has no way left to correct the range. Where the
