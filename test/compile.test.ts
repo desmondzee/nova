@@ -1,4 +1,13 @@
-import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -73,6 +82,74 @@ describe("compileApp", () => {
     expect(result.written).toEqual([]);
     expect(result.files.length).toBe(6);
     expect(() => readFileSync(join(appDir, "generated", "pages.tsx"), "utf8")).toThrow();
+  });
+
+  /**
+   * `outDir: "."` puts the output beside `data.ts`, which the README explicitly invites
+   * ("so is a path that escapes the app folder … and so is an absolute one"), and all
+   * six output names are ordinary names in a hand-written app folder. Nova used to write
+   * over whatever was there and answer `ok: true`.
+   */
+  it("refuses to overwrite a file it did not write, and keeps its contents", async () => {
+    const appDir = fixtureCopy();
+    const mine = "export const MY_PRECIOUS = 1; // hand-written\n";
+    writeFileSync(join(appDir, "types.ts"), mine);
+    const result = await compileApp(appDir, { ...configFor(appDir), outDir: "." });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((d) => d.code)).toEqual(["NOVA2016"]);
+    expect(result.diagnostics[0]!.message).toContain("types.ts");
+    expect(result.diagnostics[0]!.file).toBe(join(appDir, "types.ts"));
+    // Untouched, and nothing else written either — the refusal is all-or-nothing, so a
+    // build never leaves half a generated/ behind next to a file it would not replace.
+    expect(readFileSync(join(appDir, "types.ts"), "utf8")).toBe(mine);
+    expect(result.written).toEqual([]);
+    expect(existsSync(join(appDir, "handlers.ts"))).toBe(false);
+    // The emit itself succeeded, so the caller can still diff what nova would have written.
+    expect(result.files.length).toBe(6);
+  });
+
+  it("names every occupied output, not just the first", async () => {
+    const appDir = fixtureCopy();
+    writeFileSync(join(appDir, "types.ts"), "export const a = 1;\n");
+    writeFileSync(join(appDir, "handlers.ts"), "export const b = 1;\n");
+    const result = await compileApp(appDir, { ...configFor(appDir), outDir: "." });
+    expect(result.diagnostics.map((d) => d.code)).toEqual(["NOVA2016", "NOVA2016"]);
+  });
+
+  it("overwrites its own output without complaint", async () => {
+    const appDir = fixtureCopy();
+    const first = await compileApp(appDir, configFor(appDir));
+    expect(first.ok).toBe(true);
+    const second = await compileApp(appDir, configFor(appDir));
+    expect(second.diagnostics).toEqual([]);
+    expect(second.written.length).toBe(6);
+  });
+
+  it("refuses a directory sitting at an output name", async () => {
+    const appDir = fixtureCopy();
+    mkdirSync(join(appDir, "generated", "types.ts"), { recursive: true });
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics.map((d) => d.code)).toEqual(["NOVA2016"]);
+  });
+
+  /**
+   * macOS and Windows fold case, so `ts.Program.getSourceFile` answers yes for `Data.ts`
+   * asked as `data.ts` — and nova then emitted `from "../data"`, which does not resolve
+   * on Linux. Clean local build, `ok: true`, zero diagnostics, CI failure inside
+   * generated code the author never wrote.
+   */
+  it("reports an app module whose filename differs in case", async () => {
+    const appDir = fixtureCopy();
+    renameSync(join(appDir, "data.ts"), join(appDir, "Data.ts"));
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics.map((d) => d.code)).toContain("NOVA2015");
+    const reported = result.diagnostics.find((d) => d.code === "NOVA2015")!;
+    expect(reported.message).toContain("Data.ts");
+    expect(reported.file).toBe(join(appDir, "Data.ts"));
+    // Refused rather than accommodated: nothing is emitted, so no `from "../data"` can
+    // reach a case-sensitive filesystem.
+    expect(result.written).toEqual([]);
   });
 
   it("stops after validation errors without emitting", async () => {

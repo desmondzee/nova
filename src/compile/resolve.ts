@@ -1,3 +1,4 @@
+import { readdirSync } from "node:fs";
 import { extname, relative, resolve, sep } from "node:path";
 import {
   diagnostic,
@@ -125,11 +126,13 @@ function exportsOf(
   appDir: string,
   tsconfigPath: string,
   session: ProgramSession | undefined,
-): Map<string, Map<string, ExportInfo>> {
+): { byBase: Map<string, Map<string, ExportInfo>>; miscased: string[] } {
   const roots = EXPORT_BASES.flatMap((base) =>
     EXPORT_EXTS.map((ext) => resolve(appDir, base + ext)),
   );
   const handle = createProgram({ tsconfigPath, roots, session });
+  const onDisk = entriesOf(appDir);
+  const miscased: string[] = [];
 
   const result = new Map<string, Map<string, ExportInfo>>();
   for (const base of EXPORT_BASES) {
@@ -138,6 +141,11 @@ function exportsOf(
       for (const ext of EXPORT_EXTS) {
         const file = resolve(appDir, base + ext);
         if (handle.program.getSourceFile(file)) {
+          // `getSourceFile` answered yes, which on macOS and Windows it also does for a
+          // file whose real name differs only in case. The directory listing is the only
+          // thing that knows: see `entriesOf`.
+          const real = onDisk.find((e) => e.toLowerCase() === base + ext);
+          if (real !== undefined && real !== base + ext) miscased.push(real);
           exportsByName = new Map(
             // `signatures` only for data.ts: a loader's declared input keys are what the
             // emitter builds its query object from. actions.ts and compute.ts have no
@@ -153,7 +161,27 @@ function exportsOf(
     }
     result.set(base, exportsByName);
   }
-  return result;
+  return { byBase: result, miscased: miscased.sort() };
+}
+
+/**
+ * The app folder's entries as the filesystem actually spells them, or `[]` where it
+ * cannot be listed (which is not this function's problem to report — a missing app dir
+ * has already been answered as `NOVA1006`).
+ *
+ * `ts.Program.getSourceFile` canonicalises case on macOS and Windows, so `Data.ts`
+ * satisfied the lookup for `data.ts` and nova emitted `from "../data"` — a specifier
+ * that does not resolve on Linux. The result was a build that was clean locally, `ok:
+ * true`, zero diagnostics, and a CI failure inside generated code the author did not
+ * write. Nothing inside TypeScript can see the difference; only the directory listing
+ * can.
+ */
+function entriesOf(dir: string): string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
 }
 
 export function resolveApp(
@@ -175,10 +203,34 @@ export function resolveApp(
   const actionOrigins: Record<string, SpecPath> = {};
   const computeOrigins: Record<string, SpecPath> = {};
 
-  const exportsByBase = exportsOf(ctx.appDir, ctx.config.tsconfigPath, ctx.session);
+  const { byBase: exportsByBase, miscased } = exportsOf(
+    ctx.appDir,
+    ctx.config.tsconfigPath,
+    ctx.session,
+  );
   const dataExports = exportsByBase.get("data") ?? new Map<string, ExportInfo>();
   const actionExports = exportsByBase.get("actions") ?? new Map<string, ExportInfo>();
   const computeExports = exportsByBase.get("compute") ?? new Map<string, ExportInfo>();
+
+  // Diagnosed, not accommodated. Nova could emit `from "../Data"` and be correct
+  // everywhere, but the three module names are the spec's own vocabulary — the README
+  // documents `data.ts`, `actions.ts` and `compute.ts` by name, and `data#trips` is
+  // written against that name — so a `Data.ts` that only works because the developer's
+  // filesystem folds case is a spelling nova should not silently adopt into an app that
+  // two other people will check out. Renaming the file is one command and leaves one
+  // spelling on every machine.
+  for (const real of miscased) {
+    out.push(
+      diagnostic(
+        "NOVA2015",
+        `'${real}' differs in case from '${real.toLowerCase()}'`,
+        { file: resolve(ctx.appDir, real), line: 1, col: 1 },
+        {
+          hint: `rename it to '${real.toLowerCase()}' — this filesystem folds case, a Linux one does not`,
+        },
+      ),
+    );
+  }
 
   // Resolve every distinct local component module referenced by the spec once,
   // and cover them all with a single additional program (never one program per

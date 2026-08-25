@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import {
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join, resolve } from "node:path";
 import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
 import { validate } from "../schema/validate.js";
 import { readCatalogs } from "./catalog.js";
@@ -14,6 +23,7 @@ import {
   emitViews,
   type EmittedFile,
 } from "./emit/index.js";
+import { HEADER } from "./emit/types.js";
 import { loadSpecFile } from "./load.js";
 import { typescriptDefect, type ProgramSession } from "./program.js";
 import { resolveApp } from "./resolve.js";
@@ -63,6 +73,42 @@ function stableStringify(value: unknown): string {
   return JSON.stringify(value);
 }
 
+/**
+ * Whether the file at `path` is one nova may write over: absent, or already carrying
+ * nova's own header on its first line.
+ *
+ * The six output names — `types.ts`, `handlers.ts`, `pages.tsx`, `views.tsx`,
+ * `runtime.tsx`, `__contract.ts` — are all ordinary names in a hand-written app folder,
+ * and `outDir` is documented as unrestricted (`"."`, beside `data.ts`, is a thing a
+ * reader will try). Nova used to write all six unconditionally and answer `ok: true`, so
+ * a hand-written `types.ts` was destroyed silently, with no copy anywhere and nothing
+ * said. The emitted header is the marker that distinguishes nova's output from
+ * everything else, and it is already on every emitted file's first line.
+ *
+ * Only the first line is read, and only 256 bytes of it: the file being checked is by
+ * definition one nova knows nothing about, and it should not be able to cost a build its
+ * memory. A directory at the path is likewise refused rather than left to throw EISDIR
+ * out of `writeFileSync`.
+ */
+function isNovaOutput(path: string): boolean {
+  let fd: number;
+  try {
+    fd = openSync(path, "r");
+  } catch {
+    // Absent — and any other reason it cannot be opened is a write that will fail with
+    // its own error rather than one that will destroy something.
+    return true;
+  }
+  try {
+    if (fstatSync(fd).isDirectory()) return false;
+    const buffer = Buffer.alloc(256);
+    const read = readSync(fd, buffer, 0, buffer.length, 0);
+    return buffer.subarray(0, read).toString("utf8").startsWith(HEADER);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 const fail = (diagnostics: Diagnostic[]): CompileResult => ({
   ok: false,
   diagnostics,
@@ -101,15 +147,9 @@ export async function compileApp(
   opts: { write?: boolean; session?: ProgramSession } = {},
 ): Promise<CompileResult> {
   const write = opts.write ?? true;
-  // Resolved here, once, and never used relative again. TypeScript reports every
-  // `SourceFile.fileName` as an absolute path, so a relative appDir made
-  // `typecheckEmitted`'s file map miss every entry and silently discard every
-  // NOVA3001/NOVA3002 — a compiler answering `ok: true` on output that does not
-  // compile. The README's own example passed a relative path, so that was the
-  // documented way to use it.
-  // Before anything reads the arguments: an appDir that is not a string is the one way
-  // to make `resolve` itself throw, and there is no position to report a diagnostic at
-  // until it has been resolved.
+  // Before anything else: an appDir that is not a string is the one argument that makes
+  // `resolve` itself throw, and there is no position to hang a diagnostic on until it
+  // has been resolved, so this one is answered against the config rather than a file.
   if (typeof appDirArg !== "string" || appDirArg === "") {
     return fail([
       diagnostic(
@@ -119,6 +159,12 @@ export async function compileApp(
       ),
     ]);
   }
+  // Resolved here, once, and never used relative again. TypeScript reports every
+  // `SourceFile.fileName` as an absolute path, so a relative appDir made
+  // `typecheckEmitted`'s file map miss every entry and silently discard every
+  // NOVA3001/NOVA3002 — a compiler answering `ok: true` on output that does not
+  // compile. The README's own example passed a relative path, so that was the
+  // documented way to use it.
   const appDir = resolve(appDirArg);
   const specFile = join(appDir, "app.yaml");
 
@@ -197,6 +243,32 @@ export async function compileApp(
   const outDir = resolve(appDir, config.outDir);
   const written: string[] = [];
   if (write) {
+    const occupied = files
+      .map((f) => join(outDir, f.name))
+      .filter((path) => !isNovaOutput(path));
+    if (occupied.length > 0) {
+      return {
+        ok: false,
+        // The emit itself succeeded, so the caller still gets what nova would have
+        // written and can diff it against what is there.
+        files,
+        written: [],
+        diagnostics: [
+          ...validateDiags,
+          ...resolveDiags,
+          ...occupied.map((path) =>
+            diagnostic(
+              "NOVA2016",
+              `refusing to overwrite '${basename(path)}': nova did not write it`,
+              { file: path, line: 1, col: 1 },
+              {
+                hint: `point outDir somewhere of nova's own (it is '${config.outDir}'), or move this file`,
+              },
+            ),
+          ),
+        ],
+      };
+    }
     mkdirSync(outDir, { recursive: true });
     for (const f of files) {
       const path = join(outDir, f.name);

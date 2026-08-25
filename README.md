@@ -86,6 +86,15 @@ plain Node ESM, must pass `".js"`; nothing else is accepted.
 so all four cases emit imports that resolve. Whatever you choose, the emitted files have
 to be inside something your own `tsc` compiles.
 
+**Nova will not write over a file it did not write.** The six output names are ordinary
+names in a hand-written app folder, and `outDir: "."` puts them beside `data.ts`, so
+before writing anything nova checks each destination for its own header line. A file
+that does not carry it — or a directory sitting at one of the names — is `NOVA2016` at
+that file, and **nothing is written at all**: the refusal is all-or-nothing rather than
+five files replaced and one skipped. `result.files` still holds what nova would have
+written, so a build script can diff. Re-writing nova's own previous output is untouched
+by this; that is the ordinary case and it carries the header.
+
 `basePath` is optional and defaults to `""`. It is the path your host mounts this
 app's handler map at, and it prefixes the URLs the generated client fetches:
 `"/api/apps/trips"` turns `fetch("/_data/trips")` into
@@ -149,6 +158,13 @@ apps/trips/
 ├── actions.ts     typed mutations
 └── generated/     emitted: pages.tsx, views.tsx, handlers.ts, types.ts, runtime.tsx, __contract.ts
 ```
+
+`app.yaml`, `data.ts`, `actions.ts` and `compute.ts` are exact, lowercase names, and the
+lowercase part is checked rather than assumed. macOS and Windows fold filename case, so
+a `Data.ts` resolves there and nova would emit `from "../data"` — a specifier that does
+not exist on Linux, discovered by CI inside generated code you did not write. Nova
+compares the name on disk against the name it expects and reports `NOVA2015` instead of
+emitting; rename the file.
 
 `pages.tsx` exports one map: `pages`, keyed by route. It used to export a second one,
 `titles`, because a page's `title:` had nowhere to go; `shell` is that somewhere now, so
