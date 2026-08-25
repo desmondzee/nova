@@ -556,8 +556,25 @@ export function resolveApp(
         } else {
           loaders.add(ref.name);
           if (loaderArity[ref.name] === undefined) {
-            loaderArity[ref.name] = dataExports.get(ref.name)!.paramCount;
-            loaderInputKeys[ref.name] = dataExports.get(ref.name)!.paramKeys;
+            const info = dataExports.get(ref.name)!;
+            loaderArity[ref.name] = info.paramCount;
+            loaderInputKeys[ref.name] = info.paramKeys;
+            // Once per loader, not once per binding: the signature is the same however
+            // many sections read it. Reported at the loader's own declaration, because
+            // that is the line to edit — the spec never mentions the input's type.
+            for (const key of info.paramKeysNeverString) {
+              out.push(
+                diagnostic(
+                  "NOVA2017",
+                  `loader '${ref.name}' declares input key '${key}' as a type a string can never be`,
+                  { file: info.file, line: info.line, col: info.col },
+                  {
+                    hint: "a loader is called with the query string, so every input value is a string — declare it `string` and parse inside the loader",
+                    related: [{ ...propAt, message: `bound here as '${propName}'` }],
+                  },
+                ),
+              );
+            }
           }
           if (loaderOrigins[ref.name] === undefined) loaderOrigins[ref.name] = [...at, propName];
         }

@@ -1,0 +1,11 @@
+pages:
+  "/":
+    title: Deals
+    filters:
+      limit: { default: "25" }
+      month: { default: "2026-08" }
+      dir: { default: asc }
+    sections:
+      - Table:
+          rows: data#deals
+          columns: [id, value]

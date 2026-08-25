@@ -329,6 +329,40 @@ describe("N5b — a column list is checked against the row type too", () => {
     expect(bad!.line).toBe(11);
   });
 
+  /**
+   * `columns` and `numeric` are two prop names from one host's table component — the
+   * only host knowledge in the codebase — so they are a default, not a rule. A catalog
+   * whose `columns` prop carries display labels rather than row keys used to get a
+   * NOVA3001 on a correct spec with no way to opt out.
+   */
+  it("checks nothing under a prop name the config's list does not carry", async () => {
+    const appDir = app("app-detail");
+    edit(appDir, "columns: [day, hours]", "columns: [Day, Hours worked]");
+    const result = await compileApp(appDir, { ...configFor(appDir), columnProps: [] });
+    expect(result.diagnostics, show(result)).toEqual([]);
+  });
+
+  it("checks a prop name the config does carry, and only then", async () => {
+    // This fixture's catalog spells its column list `cols`, which is exactly the case
+    // the closed list gave no check at all.
+    const appDir = app("app-sortable-rows");
+    edit(appDir, "cols: [date, km]", "cols: [dayz, km]");
+    const unchecked = await compileApp(appDir, configFor(appDir));
+    expect(
+      unchecked.diagnostics.filter((d) => d.message.includes("dayz")),
+      show(unchecked),
+    ).toEqual([]);
+    const checked = await compileApp(appDir, { ...configFor(appDir), columnProps: ["cols"] });
+    expect(checked.diagnostics.find((d) => d.message.includes("dayz"))?.code).toBe("NOVA3001");
+  });
+
+  it("still checks sortable, which is nova's own word", async () => {
+    const appDir = app("app-sortable-rows");
+    edit(appDir, "sortable: [date, km]", "sortable: [datez, km]");
+    const result = await compileApp(appDir, { ...configFor(appDir), columnProps: [] });
+    expect(result.diagnostics.find((d) => d.message.includes("datez"))?.code).toBe("NOVA3001");
+  });
+
   it("claims nothing about a column list on a section whose rows are not an object list", async () => {
     const appDir = app("app-sections");
     edit(appDir, "columns: [date, km]", "columns: [date, km, anything]");
@@ -412,5 +446,51 @@ describe("N8 — the app-root import specifier is computed from the resolved out
     const views = emitViews(resolvedApp, cfg).text;
     expect(pages).toContain('from "./views"');
     expect(views).toContain('from "./runtime"');
+  });
+});
+
+/**
+ * The half of the `as never` boundary nova can answer without a coercion design. A
+ * generated loader handler calls `data.x(Object.fromEntries(searchParams) as never)`, so
+ * every value it can pass is a `string`; a key whose declared type a string can never be
+ * is a lie the library already has the information to refuse.
+ */
+describe("a loader input key that can never hold what the handler passes", () => {
+  it("reports the numeric key, at the loader's own declaration", async () => {
+    const appDir = app("app-numeric-input");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.ok).toBe(false);
+    const reported = result.diagnostics.filter((d) => d.code === "NOVA2017");
+    expect(reported).toHaveLength(1);
+    expect(reported[0]!.message).toContain("'limit'");
+    // The spec never mentions the type, so the line to edit is in data.ts.
+    expect(reported[0]!.file).toBe(join(appDir, "data.ts"));
+    expect(reported[0]!.related?.[0]!.message).toContain("rows");
+  });
+
+  it("leaves a union that merely narrows the string alone", async () => {
+    const appDir = app("app-numeric-input");
+    const result = await compileApp(appDir, configFor(appDir));
+    // `dir: "asc" | "desc"` is how the README's own sorting section says to declare a
+    // sort direction, and nova is the one writing that parameter.
+    expect(result.diagnostics.map((d) => d.message).join("\n")).not.toContain("'dir'");
+    expect(result.diagnostics.map((d) => d.message).join("\n")).not.toContain("'month'");
+  });
+
+  it("says it once however many sections bind the loader", async () => {
+    const appDir = app("app-numeric-input");
+    edit(
+      appDir,
+      "      - Table:\n          rows: data#deals\n          columns: [id, value]\n",
+      "      - Table:\n          rows: data#deals\n          columns: [id, value]\n      - Breakdown:\n          rows: data#deals\n          columns: [id, value]\n",
+    );
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics.filter((d) => d.code === "NOVA2017")).toHaveLength(1);
+  });
+
+  it("says nothing about a loader every fixture declares correctly", async () => {
+    const appDir = app("app-sort-loader");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics.filter((d) => d.code === "NOVA2017")).toEqual([]);
   });
 });

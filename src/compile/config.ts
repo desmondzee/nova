@@ -34,6 +34,23 @@ export type NovaConfig = {
   /** Extension appended to relative imports in emitted code. "" for bundler resolution. */
   importExtension?: "" | ".js";
   /**
+   * Prop names whose literal string-array value nova checks against the row type the
+   * section's loader returns, beside its own `sortable:`.
+   *
+   * Defaults to `["columns", "numeric"]`, which is the naming the reference host uses
+   * and which caught a `columns: [dayz]` rendering a column of en dashes on three
+   * production pages. It is a **default, not a rule**: a catalog whose column prop is
+   * `cols` or `fields` names it here and gets the same check, and a catalog whose
+   * `columns` prop carries display *labels* rather than row keys sets `columnProps: []`
+   * — or omits `"columns"` from the list — and gets none. Without this the check had no
+   * opt-out and a correct spec on such a catalog was a `NOVA3001` with nothing to do
+   * about it.
+   *
+   * `sortable:` is not affected: it is nova's own word, its values are row keys by
+   * definition, and it is checked whatever this says.
+   */
+  columnProps?: string[];
+  /**
    * Prefix for the loader and action URLs the generated client fetches — the path the
    * host mounts this app's handler map at, e.g. "/api/apps/trips". Defaults to "", which
    * keeps the origin-relative "/_data/x" and "/_actions/x" a site-root host expects.
@@ -132,6 +149,14 @@ export function validateConfig(config: unknown, at: Position): Diagnostic[] {
         "a path to the tsconfig used to resolve modules and typecheck emitted output",
       ),
     );
+  }
+
+  const columnProps = config["columnProps"];
+  if (
+    columnProps !== undefined &&
+    (!Array.isArray(columnProps) || !columnProps.every(isNonEmptyString))
+  ) {
+    out.push(bad("nova.config 'columnProps' must be an array of prop names"));
   }
 
   for (const key of ["shell", "basePath"] as const) {

@@ -78,6 +78,20 @@ export type ExportInfo = {
    */
   paramKeys: string[] | null;
   /**
+   * The subset of `paramKeys` whose declared type cannot be a string at all.
+   *
+   * A generated loader handler calls `data.x(Object.fromEntries(searchParams) as never)`
+   * — every value it can ever pass is a `string`, because a query string holds nothing
+   * else. A key declared `limit: number` is therefore receiving `"25"`, and `input.limit
+   * > 10` compares a string to a number with nothing anywhere saying so. Nova already
+   * has the type; reporting it is one diagnostic instead of a silent falsehood.
+   *
+   * A type that *can* be a string is left alone, including a union that merely narrows
+   * it: `dir: "asc" | "desc"` is how the README's own sorting section says to declare
+   * the sort direction, and nova is the one writing that parameter.
+   */
+  paramKeysNeverString: string[];
+  /**
    * Type parameters of the first call signature: how many there are, and how many carry
    * no default (so must be written if a type argument list is written at all).
    *
@@ -216,7 +230,10 @@ export function createProgram(opts: {
  * legitimately read — `null` keeps the caller's existing behaviour there. A parameter
  * that is a primitive, a union, or generic likewise yields nothing to narrow by.
  */
-function firstParamKeys(checker: ts.TypeChecker, signature: ts.Signature): string[] | null {
+function firstParamKeys(
+  checker: ts.TypeChecker,
+  signature: ts.Signature,
+): { keys: string[]; neverString: string[] } | null {
   const parameter = signature.parameters[0];
   if (!parameter) return null;
   const declaration = parameter.valueDeclaration ?? parameter.declarations?.[0];
@@ -226,7 +243,39 @@ function firstParamKeys(checker: ts.TypeChecker, signature: ts.Signature): strin
   if (checker.getIndexInfoOfType(type, ts.IndexKind.String) !== undefined) return null;
   const properties = checker.getPropertiesOfType(type);
   if (properties.length === 0) return null;
-  return properties.map((p) => p.getName()).sort();
+  const neverString = properties
+    .filter((p) => {
+      const decl = p.valueDeclaration ?? p.declarations?.[0];
+      if (!decl) return false;
+      return !canBeString(checker.getTypeOfSymbolAtLocation(p, decl));
+    })
+    .map((p) => p.getName())
+    .sort();
+  return { keys: properties.map((p) => p.getName()).sort(), neverString };
+}
+
+/**
+ * Whether a string is one of the things this type can hold.
+ *
+ * Deliberately permissive: `any`, `unknown` and every string flavour pass, a union
+ * passes if any constituent does, and only a type with no string-shaped constituent at
+ * all — `number`, `boolean`, `Date`, an object, `number | undefined` — is reported. An
+ * intersection is left alone; narrowing a string by intersection is unusual enough that
+ * guessing wrong there would be worse than saying nothing.
+ */
+function canBeString(type: ts.Type): boolean {
+  const STRINGY =
+    ts.TypeFlags.Any |
+    ts.TypeFlags.Unknown |
+    ts.TypeFlags.String |
+    ts.TypeFlags.StringLiteral |
+    ts.TypeFlags.TemplateLiteral |
+    ts.TypeFlags.StringMapping |
+    ts.TypeFlags.TypeParameter;
+  if (type.flags & STRINGY) return true;
+  if (type.isUnion()) return type.types.some(canBeString);
+  if (type.isIntersection()) return true;
+  return false;
 }
 
 /**
@@ -246,6 +295,7 @@ export function moduleExports(
   if (!moduleSymbol) return [];
 
   const out: ExportInfo[] = [];
+  const NO_PARAM_KEYS = { keys: null, neverString: [] as string[] };
   for (const symbol of checker.getExportsOfModule(moduleSymbol)) {
     const declaration = symbol.declarations?.[0];
     if (!declaration) continue;
@@ -254,6 +304,9 @@ export function moduleExports(
     const type = checker.getTypeOfSymbolAtLocation(symbol, declaration);
     const callSignatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
     const typeParams = callSignatures[0]?.declaration?.typeParameters;
+    const params =
+      (opts.signatures && callSignatures[0] ? firstParamKeys(checker, callSignatures[0]) : null) ??
+      NO_PARAM_KEYS;
     out.push({
       name: symbol.getName(),
       callable: callSignatures.length > 0,
@@ -261,10 +314,8 @@ export function moduleExports(
       line: line + 1,
       col: character + 1,
       paramCount: callSignatures[0]?.parameters.length ?? 0,
-      paramKeys:
-        opts.signatures && callSignatures[0]
-          ? firstParamKeys(checker, callSignatures[0])
-          : null,
+      paramKeys: params.keys,
+      paramKeysNeverString: params.neverString,
       typeParams: {
         total: typeParams?.length ?? 0,
         required:

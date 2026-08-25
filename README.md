@@ -120,6 +120,19 @@ not move with it — they are matched against the remainder of the path *after* 
 mount, so prefixing both halves would double the prefix. Leave `basePath` unset for
 a host that serves apps from the site root.
 
+`columnProps` is optional and defaults to `["columns", "numeric"]`. It names the props
+whose literal string-array value nova checks against the row type the section's loader
+returns — see [sorting](#confirmation-filter-writes-and-sorting). The default is the
+naming the reference host happens to use, not a rule: a catalog spelling its column list
+`cols` puts that here and gets the same check, and a catalog whose `columns` prop carries
+display *labels* rather than row keys sets `columnProps: []` and gets none. `sortable:`
+is nova's own word and is checked whatever this says.
+
+Every field is checked at runtime before it is used — `NovaConfig` is a type, and a type
+checks nothing for a build script written in JavaScript or a config read from JSON. A
+missing or wrong-typed field is `NOVA2014` naming the field, with every problem in one
+run, rather than a `TypeError` out of whichever stage first touched it.
+
 `states.loading` and `states.error` are required and `states.empty` is optional; see
 [what nova renders itself](#what-nova-renders-itself).
 
@@ -741,6 +754,23 @@ Filter values are **always strings**, because they live in the query string. A l
 that wants a number parses it (`Math.max(1, Number(input.page) || 1)`), and a filter's
 `default:` is written as one (`page: { default: "1" }`). Nova does not coerce.
 
+It does check that you did not say otherwise. The generated handler calls
+`data.x(Object.fromEntries(searchParams) as never)`, so every value a loader can receive
+is a `string` — and a loader declaring `limit: number` is therefore handed `"25"`, with
+`input.limit > 10` comparing a string to a number and nothing anywhere saying so. An
+input key whose declared type a string can never be is `NOVA2017`, reported at the
+loader's own declaration in `data.ts`, because that is the line to edit. A type a string
+*can* be is left alone, including a union that merely narrows it: `dir: "asc" | "desc"`
+is how the sorting section above says to declare a sort direction, and nova is the one
+writing that parameter.
+
+The **action** half of the same boundary is not checked, and cannot be from a type
+alone: an action receives an arbitrary JSON body, asserted into its declared input after
+nothing but an "is it an object" test. `POST /_actions/<name>` performs **no input
+validation** — an action declaring `{ documentId: string; amountMinor: number }` will be
+called with `{}` if a caller sends `{}`. Validate inside the action, and do not expose
+generated action endpoints to any caller the host does not already trust.
+
 Generated code is safe under `noUncheckedIndexedAccess`. Filter values are keyed by
 the filter names the page declares rather than by an open index signature, and each
 route param a page reads is narrowed into a local once at the top of the page function.
@@ -824,6 +854,9 @@ Codes are stable.
   case-insensitive filesystem answers `yes` to and a case-sensitive one does not.
   `NOVA2016` is a file at one of the six output names that nova did not write —
   a fact about `outDir`, answered at the moment the write would have destroyed it.
+  `NOVA2017` is a loader input key whose declared type a string can never be, which
+  is back to plain resolution: the generated handler can only ever pass strings, so
+  the loader's own signature is the thing that disagrees with it.
 - `NOVA3xxx` — a problem TypeScript found in the emitted output. `NOVA3001` is
   remapped back to the YAML line that produced it; `NOVA3002` is reported at
   the generated location instead, because it has no traceable spec origin —
@@ -1208,13 +1241,25 @@ callback type with two, so `onPick: (id: string, index: number) => void` accepts
 action whose input is a `string`. The first argument is checked; the rest are ignored,
 exactly as in ordinary JavaScript.
 
-**The handler-to-loader boundary is not typechecked.** `handlers.ts` hands
-URL search params (and, for an action, the parsed JSON body) to your function
-through `as never`. That is the one place an untyped external value meets a
-typed signature, and nothing checks it: a loader narrowed to
-`input: { status: "open" | "closed" }` compiles even though a request can
-supply any string. Validate inputs inside the loader if the distinction
-matters.
+**The handler-to-loader boundary is not typechecked, and the action half is worse.**
+`handlers.ts` hands URL search params (and, for an action, the parsed JSON body) to your
+function through `as never`. That is the one place an untyped external value meets a
+typed signature.
+
+For a **loader**, `NOVA2017` now closes the part of it a type can answer — a key whose
+declared type a string can never be — and what remains is narrowing: a loader declaring
+`input: { status: "open" | "closed" }` compiles even though a request can supply any
+string. Validate inside the loader where the distinction matters.
+
+For an **action**, nothing of the sort is possible from a type: the value is arbitrary
+JSON from the caller, and the only check performed is that it is an object at all. An
+action declaring `{ documentId: string; amountMinor: number }` is called with `{}` if a
+caller sends `{}`. Generated action endpoints therefore perform **no input validation**
+and must not be exposed to any caller the host does not already trust; validate at the
+top of every action that does anything consequential. Coercion, and a spec-declared
+input shape to coerce against, is a design nova does not yet have — the key that was
+going to carry it (`filters: { month: { type: month } }`) was removed from the format as
+dead weight, and nothing replaced it.
 
 **The input hash does not cover source file contents.** The stamp written
 into each emitted file's header covers the spec source, the whole config

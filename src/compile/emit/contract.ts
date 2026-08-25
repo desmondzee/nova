@@ -16,16 +16,21 @@ const ROW_OF =
   "type NovaRowOf<T> = T extends readonly (infer R)[] ? R : { [key: string]: unknown };";
 
 /**
- * The two prop names a column list is written under, beside nova's own `sortable:`.
+ * The prop names a column list is written under by default, beside nova's own
+ * `sortable:`.
  *
- * A closed list, and the only naming this file does: `columns:` is already the name the
- * spec's own NOVA1009 reasons about ("is not one of 'Table's columns"), and `numeric:` is
- * the subset of that list a table right-aligns. A catalog spelling either of them
- * something else gets what it got before — no check — exactly as `rows:` versus `feed:`
- * makes no difference to which loader is read. This is why `sortable:` is checked here
- * rather than against a prop: it is nova's word, and needs no list.
+ * `columns:` is already the name the spec's own NOVA1009 reasons about ("is not one of
+ * 'Table's columns"), and `numeric:` is the subset of that list a table right-aligns.
+ * They are two prop names from one host's table component, though, which is the only
+ * host knowledge in this codebase — so the list is `config.columnProps` and this is
+ * merely its default. A catalog spelling its column list `cols` names it there and gets
+ * the same check; a catalog whose `columns` prop carries display *labels* rather than
+ * row keys sets `columnProps: []` and gets none, which it previously had no way to do.
+ *
+ * `sortable:` is checked whatever the list says: it is nova's own word, so its values
+ * are row keys by definition and there is nothing to configure.
  */
-const COLUMN_PROPS = ["columns", "numeric"];
+const DEFAULT_COLUMN_PROPS = ["columns", "numeric"];
 
 /**
  * The type expression for the value one section reads from a loader — `Travel["days"]`
@@ -52,6 +57,7 @@ function rowSource(section: SectionSpec): string | undefined {
 function columnLists(
   sections: SectionSpec[],
   path: SpecPath,
+  columnProps: string[],
 ): { section: SectionSpec; columns: string[]; at: SpecPath }[] {
   const out: { section: SectionSpec; columns: string[]; at: SpecPath }[] = [];
   sections.forEach((section, i) => {
@@ -60,7 +66,7 @@ function columnLists(
     if (section.sortable !== undefined) {
       out.push({ section, columns: section.sortable, at: [...here, key, "sortable"] });
     }
-    for (const prop of COLUMN_PROPS) {
+    for (const prop of columnProps) {
       const value = section.props[prop];
       if (
         value?.kind === "literal" &&
@@ -70,7 +76,7 @@ function columnLists(
         out.push({ section, columns: value.value as string[], at: [...here, key, prop] });
       }
     }
-    out.push(...columnLists(section.children, [...here, key, "children"]));
+    out.push(...columnLists(section.children, [...here, key, "children"], columnProps));
   });
   return out;
 }
@@ -129,11 +135,11 @@ export function emitContract(app: ResolvedApp, config: NovaConfig): EmittedFile 
   // checked here now, on exactly the terms `sortable:` is.
   const checks: { name: string; row: string; columns: string[]; at: SpecPath }[] = [];
   for (const page of app.spec.pages) {
-    for (const { section, columns, at } of columnLists(page.sections, [
-      "pages",
-      page.route,
-      "sections",
-    ])) {
+    for (const { section, columns, at } of columnLists(
+      page.sections,
+      ["pages", page.route, "sections"],
+      config.columnProps ?? DEFAULT_COLUMN_PROPS,
+    )) {
       const row = rowSource(section);
       if (row === undefined) continue;
       checks.push({ name: `_columns_${checks.length}`, row, columns, at });
