@@ -1,8 +1,7 @@
 import { resolve } from "node:path";
 import ts from "typescript";
-import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
+import { diagnostic, type Diagnostic, type PositionMap } from "../schema/diagnostic.js";
 import type { EmittedFile } from "./emit/types.js";
-import type { PositionMap } from "./load.js";
 import { createProgram, type ProgramSession } from "./program.js";
 
 /**

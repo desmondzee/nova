@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { Emitter } from "../src/compile/emit/emitter.js";
 import type { EmittedFile } from "../src/compile/emit/types.js";
-import type { PositionMap } from "../src/compile/load.js";
+import type { PositionMap } from "../src/schema/diagnostic.js";
 import { typecheckEmitted } from "../src/compile/typecheck.js";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));

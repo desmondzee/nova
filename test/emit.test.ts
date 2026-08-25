@@ -13,9 +13,10 @@ import {
   emitViews,
 } from "../src/compile/emit/index.js";
 import { hooksUsed } from "../src/compile/emit/pages.js";
-import { loadSpecFile, type PositionMap } from "../src/compile/load.js";
+import { loadSpecFile } from "../src/compile/load.js";
 import { resolveApp } from "../src/compile/resolve.js";
 import { typecheckEmitted } from "../src/compile/typecheck.js";
+import type { PositionMap } from "../src/schema/diagnostic.js";
 import { validate } from "../src/schema/validate.js";
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));

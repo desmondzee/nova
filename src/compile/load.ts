@@ -8,8 +8,6 @@ import {
 import type { AppSpec } from "../schema/types.js";
 import { validate } from "../schema/validate.js";
 
-export type { PositionMap } from "../schema/diagnostic.js";
-
 export function loadSpecFile(
   file: string,
   source: string,

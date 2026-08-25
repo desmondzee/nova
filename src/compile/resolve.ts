@@ -1,5 +1,11 @@
 import { extname, relative, resolve, sep } from "node:path";
-import { diagnostic, suggest, type Diagnostic, type SpecPath } from "../schema/diagnostic.js";
+import {
+  diagnostic,
+  suggest,
+  type Diagnostic,
+  type PositionMap,
+  type SpecPath,
+} from "../schema/diagnostic.js";
 import { componentKey, type AppSpec, type PageSpec, type PropValue, type SectionSpec } from "../schema/types.js";
 import { isComponentName, type Catalog } from "./catalog.js";
 import type { NovaConfig } from "./config.js";
@@ -8,7 +14,6 @@ import type { NovaConfig } from "./config.js";
 // the two cannot drift; nothing at runtime flows the other way (emit/pages.ts's import of
 // this module is type-only), so there is no cycle.
 import { pageNeedsFilters } from "./emit/pages.js";
-import type { PositionMap } from "./load.js";
 import {
   createProgram,
   moduleExports,
@@ -16,8 +21,6 @@ import {
   type ExportInfo,
   type ProgramSession,
 } from "./program.js";
-
-export type { SpecPath };
 
 function collectLocalModules(sections: SectionSpec[], into: Set<string>): void {
   for (const section of sections) {

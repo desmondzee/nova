@@ -3,7 +3,8 @@ import type { NovaConfig } from "./config.js";
 import { createProgram, moduleExports, resolveModule, type ProgramSession } from "./program.js";
 
 export type CatalogEntry = {
-  name: string;
+  /** Module specifier as `components:` wrote it, and the file it resolved to. The name
+   * is not repeated here: it is the key every entry is looked up by. */
   module: string;
   file: string;
   /** The export's type parameters, carried through so the emitter can decide whether it
@@ -67,12 +68,7 @@ export function readCatalogs(
           );
           continue;
         }
-        entries.set(exported.name, {
-          name: exported.name,
-          module,
-          file,
-          typeParams: exported.typeParams,
-        });
+        entries.set(exported.name, { module, file, typeParams: exported.typeParams });
       }
     }
   } else {
