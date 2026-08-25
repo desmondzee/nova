@@ -3,10 +3,17 @@
 A build-time compiler that turns a declarative YAML description of an app's UI
 into React pages and HTTP handlers.
 
-Nova ships **no components and no runtime**. Components come from your own
-codebase, and every type check is performed by your TypeScript, not
-reimplemented. Generated code imports your catalogs, your app's files, and
-React — never nova.
+Nova ships **no components**, and **generated code imports nothing from nova** — only
+your catalogs, your app's own files, and React. Components come from your codebase, and
+every type check is performed by your TypeScript rather than reimplemented.
+
+Nova is not, however, dependency-free at runtime in the sense that phrase usually
+carries. There *is* a runtime — fetching, race-guarding, query-string round-tripping,
+confirmation and form state — and nova **vendors a copy of it into every app** as
+`generated/runtime.tsx`, between roughly 50 and 120 lines depending on what the app
+uses. Nothing links back to nova, so nothing of nova's is in your `package.json` or your
+bundle; the cost is that a fix to that runtime is one regenerated file per app rather
+than one version bump. See [limitations](#limitations).
 
 ## Install
 
@@ -60,9 +67,19 @@ const result = await compileApp("apps/trips", {
 
 for (const d of result.diagnostics) {
   console.error(`${d.file}:${d.line}:${d.col} ${d.code} ${d.message}`);
+  // Print these. `hint` is where "did you mean 'Table'?" lives, and `related` is where
+  // the other end of a collision is named — a loop that drops them throws away the half
+  // of a diagnostic that says what to do about it.
+  if (d.hint !== undefined) console.error(`  ${d.hint}`);
+  for (const r of d.related ?? []) console.error(`  ${r.file}:${r.line}:${r.col} ${r.message}`);
 }
 process.exit(result.ok ? 0 : 1);
 ```
+
+A `Diagnostic` is
+`{ code, severity, message, file, line, col, hint?, related? }` — `severity` is
+`"error" | "warning"`, and `related` entries are `{ file, line, col, message }`. Codes are
+stable; message wording is not, so assert on `code`.
 
 The app directory may be relative (resolved against the process working directory) or
 absolute; both answer identically, and every path in the result — `written`, and each
@@ -812,8 +829,14 @@ Codes are stable.
   the generated location instead, because it has no traceable spec origin —
   that shape covers not only type errors but also syntactic problems in the
   generated code (for example malformed output from a bad template edge
-  case). `NOVA3002` on its own is a signal of a nova bug, not a problem with
-  your spec.
+  case). `NOVA3002` means only that nova could not trace the problem back to a
+  spec line — it is *often* a nova bug, and it is worth reporting as one, but
+  three ordinary misconfigurations produce it in bulk and none of them is:
+  `moduleResolution: "node16"` without `importExtension: ".js"`, and a tsconfig
+  without `lib: ["DOM"]` (both documented above), and a `tsconfig.json` whose
+  `strict` flags reject code nova emits. Read the message first; where it names
+  a missing extension, a missing global or a rule of your own tsconfig, it is
+  telling you the truth.
 
 ## Breaking changes
 
@@ -1035,6 +1058,26 @@ in the value it carries, one type parameter — because the unrestricted version
 field lose its check silently.
 
 ## Limitations
+
+**The runtime is vendored per app, so a runtime fix is an N-app diff.**
+`generated/runtime.tsx` is roughly 50–120 lines of `useLoader`, `useAction`, `useForm`,
+`useFilters` and `useSort`, and every app gets its own copy, committed. That is what
+keeps generated code importing nothing from nova — and it means a defect in any of those
+hooks is fixed by regenerating and reviewing one file per app, not by bumping a version.
+It is not hypothetical: most of the behaviour fixes in
+[breaking changes](#breaking-changes) are `runtime.tsx` fixes, and on the 38-app host
+each of them is 38 regenerated files. One production app carried 59 lines of its own
+workaround for a compiler defect that had already been fixed, because it was pinned to
+an older vendored build.
+
+The obvious answer is a `runtimeDir` config emitting one shared `runtime.tsx` per
+repository rather than one per app; it satisfies "generated code imports nothing from
+nova" identically, since the shared file would still be the host's own. It is not in
+0.2.0: it changes the emitted module graph and the mounting contract, so it needs its own
+round rather than a late edit before a first publish. Until then, budget a
+regenerate-and-review pass across every app for any nova upgrade whose notes mention
+`runtime.tsx`, and treat the emitted stamp — which covers the compiler version — as the
+thing that tells you which apps are behind.
 
 **Class components are not recognised.** Nova detects a component by checking
 whether its export has a call signature. A class export has a construct

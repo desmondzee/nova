@@ -56,9 +56,17 @@ UI into the `pages` and `handlers` maps the platform already mounts.
 It compiles the UI layer only. It does not model Light's API, does not describe
 queries, does not own pagination or retries, and does not render documents.
 
-Nova ships **no components and no runtime**. Components live in the host
-codebase. Every type check is performed by the host's own TypeScript rather than
-reimplemented.
+Nova ships **no components**, and emitted code imports nothing from nova.
+Components live in the host codebase. Every type check is performed by the host's
+own TypeScript rather than reimplemented.
+
+It does emit a **runtime**, and this design vendors a copy of it into every app
+(`generated/runtime.tsx`, ~50–120 lines of fetching, race-guarding, query-string
+round-tripping, confirmation and form state). "No runtime" was written meaning
+"nothing of nova's is in the host's dependency graph or bundle", which is true and
+is what Rule 2 below enforces; it does not mean the emitted app has no runtime
+code. The cost of the copy is that a fix to any of those hooks is one regenerated
+file per app rather than one version bump — see §7.7.
 
 ### It must generalise, and external-apps is one consumer
 
@@ -147,8 +155,9 @@ nova (this repo)                     any host
                                       apps/<slug>/generated/  emitted, committed
 ```
 
-Nova has two entry points and no runtime. Nothing from nova is in the server or
-client bundle.
+Nova has two entry points, and nothing from nova is in the server or client
+bundle. The runtime the apps do use is emitted into each app rather than imported
+(§7.7).
 
 ## 5. The spec format
 
@@ -552,6 +561,31 @@ understood:
 Flat `{ code, severity, message, file, line, col, hint?, related? }` with stable
 codes (`NOVA1001`). Stable codes let the testkit assert on failures without
 pinning message wording.
+
+### 7.7 The runtime is emitted per app, and that is a cost
+
+`generated/runtime.tsx` is ~50–120 lines of `useLoader`, `useAction`, `useForm`,
+`useFilters` and `useSort`, and every app gets its own committed copy. This is a
+deliberate consequence of Rule 2 (emitted code imports nothing from nova) taken at
+its simplest, and it is what makes the emitted app independent of nova's own
+lifetime.
+
+It was described throughout this document as "no runtime", which conflated two
+separate things: nothing of nova's is in the host's dependency graph or bundle
+(true, and enforced), and the emitted app contains no runtime code (false — it
+contains a copy of one). The distinction matters because the arithmetic is
+different: a defect in any of those hooks is fixed by regenerating and reviewing
+**one file per app**, not by bumping a version. Most of the behaviour fixes in
+0.2.0 are `runtime.tsx` fixes; on the 38-app host each is 38 regenerated files, and
+one converted app carried 59 lines of its own workaround for a compiler defect that
+had already been fixed, because it was pinned to an older vendored build.
+
+A `runtimeDir` config emitting one shared `runtime.tsx` per repository satisfies
+Rule 2 identically — the shared file is still the host's own — and turns a runtime
+fix back into one file. It is not in 0.2.0: it changes the emitted module graph and
+the mounting contract, so it is its own design round rather than a late edit before
+a first publish. Recorded here and in the README's limitations so the cost is
+stated rather than discovered.
 
 ## 8. Integration into external-apps
 
