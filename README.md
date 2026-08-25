@@ -762,6 +762,39 @@ Codes are stable.
 
 ## Breaking changes
 
+### Since 0.1.0 — a smaller `generated/`
+
+A leanness pass over what nova *emits*, on the arithmetic that a line in nova's own
+source costs once and a line in `generated/` costs once per app: across the intended
+38-app host, ten emitted lines is 380. Measured on the four converted apps, this took
+`generated/` from 511, 479, 388 and 199 lines to 393, 374, 323 and 169 — between 15% and
+23% each. Nothing about the spec format, the config, a catalog or the two mounted maps
+changed, and only the first item below can be noticed by a host at all.
+
+- **`types.ts` no longer exports `${Cap}` for an action bound only by a form's
+  `submit:`.** `SaveTrip` was `typeof actions.saveTrip`, and the only thing that ever
+  named it was `useAction`'s second type argument — which a form's action never reaches,
+  because a form goes through `useForm<SaveTripInput>`. An action bound to an ordinary
+  prop still gets both halves, and every action still gets its `${Cap}Input`. **What a
+  host must do:** nothing, unless it imports that alias from `generated/types` itself, in
+  which case write `typeof actions.saveTrip` — which is all the alias was.
+- **`__contract.ts` binds only the loaders.** The action binding it dropped was
+  `const _saveTrip: SaveTrip = actions.saveTrip` where `SaveTrip` *is*
+  `typeof actions.saveTrip`: an expression assigned to its own type, which no
+  assignability rule can reject. A loader's binding restates the shape it has to have
+  (`(input: …) => Promise<…>`) and so still catches arity and a loader that isn't
+  `async`. Nothing imports `__contract.ts`; it is typechecked and never executed.
+- **The emitted handler entries are one expression each.** `handlers.ts` wrote a block
+  body around a single `return`, and unpacked the query string into two locals read once
+  apiece. Same map, same keys, same types, same behaviour — including the status
+  vocabulary and the 400 for a malformed body.
+- **The emitted `runtime.tsx` carries short doc comments.** The reasoning behind each
+  hook now lives in the compiler rather than in the string it emits; roughly 45 lines per
+  app of identical prose is gone from files marked "do not edit". No code changed.
+
+As with the sets below, the input stamp covers the compiler *version* and not its build,
+so force one rebuild across the upgrade rather than trusting an unchanged stamp.
+
 ### Since 0.1.0 — four defects three converted production apps found
 
 An equivalence audit converted three production apps and compared each against the
@@ -970,11 +1003,14 @@ empty diagnostics array means the seam between the spec and your code is
 clean; it does not mean the overall build is clean. That seam check lives in
 `pages.tsx`: its JSX binds every prop to the component and loader/action type
 the spec references, so a mismatch is real React JSX typing, not a
-comparator nova maintains. `__contract.ts` is a narrower, additional check —
-its `XxxInput`/`Xxx` types are derived from the very loader/action they are
-assigned back to, so it cannot catch a spec/code type mismatch (`pages.tsx`
-already does); it catches loader arity and a loader that isn't declared
-`async`, which `pages.tsx`'s JSX has no occasion to exercise.
+comparator nova maintains. `__contract.ts` is a narrower, additional check
+over the **loaders** — its `XxxInput`/`Xxx` types are derived from the very
+loader they are assigned back to, so it cannot catch a spec/code type
+mismatch (`pages.tsx` already does); what it catches is loader arity and a
+loader that isn't declared `async`, which `pages.tsx`'s JSX has no occasion
+to exercise. It binds no *action*: an action's binding would have been
+`const _x: typeof actions.x = actions.x`, an expression assigned to its own
+type, which no assignability rule can reject.
 
 **A form's starting values are literals, applied once.** `initial:` on a field
 takes a literal, so a form cannot be prefilled from a loader — an edit form

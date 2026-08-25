@@ -16,11 +16,14 @@ import { createProgram, type ProgramSession } from "./program.js";
  * itself stays covered because `pages.tsx`'s JSX binds every spec prop to the component
  * and loader/action types it references — real React JSX typing, not a comparator nova
  * maintains — and is always one of the emitted files. `__contract.ts` is a narrower,
- * additional check: `XxxInput`/`Xxx` are themselves derived from the loader/action they
- * are then assigned back to (`Parameters<typeof data.x>[0]`,
+ * additional check over the *loaders*: `XxxInput`/`Xxx` are themselves derived from the
+ * loader they are then assigned back to (`Parameters<typeof data.x>[0]`,
  * `Awaited<ReturnType<typeof data.x>>`), so it cannot catch a prop/loader type
- * mismatch — pages.tsx already does — but it does catch loader arity and a loader that
- * isn't async, which pages.tsx's JSX has no occasion to exercise.
+ * mismatch — pages.tsx already does — but the shape it restates
+ * (`(input: …) => Promise<…>`) does catch loader arity and a loader that isn't async,
+ * which pages.tsx's JSX has no occasion to exercise. There is no action binding there:
+ * an action's would have been `const _x: typeof actions.x = actions.x`, which no
+ * assignability rule can reject.
  *
  * Consequently, an empty result means the seam between the spec and the author's code
  * is clean — it does NOT mean the overall build is clean.
