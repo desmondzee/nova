@@ -87,9 +87,10 @@ spacing and structure between top-level sections belongs**. Nova hands it the pa
 </PageShell>
 ```
 
-It wraps the loading and error states too, so a page's own chrome does not vanish while
-it loads. Without it a page's sections emit into a bare `<></>` — which is what they did
-before shells existed, so leaving `shell` unset changes nothing. The cost of leaving it
+A page has exactly one return path — the loading and error states are rendered per
+section, not around the page (see [failing well](#failing-well)) — so a page's own chrome
+never vanishes. Without a shell a page's sections emit into a bare `<></>`, which is what
+they did before shells existed, so leaving `shell` unset changes nothing. The cost of leaving it
 unset is that vertical rhythm has nowhere to live but inside each component (a
 `mt-4 first:mt-0` on every section-level component), which is a layout concern pushed
 into components and a convention every host would otherwise invent for itself.
@@ -388,8 +389,8 @@ not match is a `NOVA3001` on every use, which is a poor way to discover it.
 | Where | What nova writes | What your component must declare |
 | --- | --- | --- |
 | `shell` | `<PageShell title={"Trips"}>` … `</PageShell>` around the page | `title?: string` (omitted for a page with no `title:`) and `children` |
-| `states.loading` | `<Loading />` | every prop optional — it is given none at all |
-| `states.error` | `<ErrorNotice>{message}</ErrorNotice>` | `children` — the message is not a prop |
+| `states.loading` | `<Loading />`, once per waiting section | every prop optional — it is given none at all |
+| `states.error` | `<ErrorNotice>{message}</ErrorNotice>`, in place of the failed section | `children` — the message is not a prop |
 | a form shell (`submit:`) | `busy`, `error`, `onSubmit`, its fields as children | `busy: boolean`, `error: string \| null`, `onSubmit: () => Promise<boolean>`, `children` |
 | a field (`fields:`) | `value`, `onChange`, `error`, **and `name`** | `name: string`, `value`/`onChange` at that input key's own type, `error?: string` |
 | a sortable section (`sortable:`) | `sort`, `onSort`, and `sortable` itself | `sort: { column: string; direction: "asc" \| "desc" } \| null`, `onSort: (column: string) => void`, `sortable: string[]` |
@@ -405,6 +406,58 @@ own rows are empty and nova does not, so the empty state belongs to your table �
 ordinary `empty:` prop of it. Where `states.empty` is given it is still resolved against
 the catalog, so a name that does not exist is still a build error; that is the whole of
 what it does.
+
+## Failing well
+
+**A page degrades one section at a time.** Each section that binds a loader renders behind
+its own conditional — the error state where that section's data failed, the loading state
+where it has not arrived, the section itself otherwise — and a section that binds no
+loader is not gated at all:
+
+```tsx
+<PageShell title={"Trips"}>
+  <TabNav … />                                             {/* chrome: always rendered */}
+  {stats.error !== null ? <ErrorNotice>{stats.error}</ErrorNotice>
+    : stats.value === null ? <Loading /> : <StatGrid stats={stats.value} />}
+  {trips.error !== null ? <ErrorNotice>{trips.error}</ErrorNotice>
+    : trips.value === null ? <Loading /> : <Table rows={trips.value} … />}
+</PageShell>
+```
+
+So one failing loader costs one section, not the page, and a page's first paint is its
+chrome with a spinner where the data goes rather than a bare `Loading`. This replaced a
+page-level gate — `if (error) return <ErrorNotice>` above every section — under which one
+loader out of five failing replaced the navigation, the header, the stats, every section
+and both forms with a single line.
+
+`.value` is still narrowed: the conditional is written one loader at a time so that
+`trips.value` is non-null in the branch that reads it. Nothing is asserted or cast, so a
+prop bound to the wrong type is still a `NOVA3001` at the spec line that bound it.
+
+**A loader or action decides what its failure is worth.** A generated handler answers with
+the status a thrown value asks for:
+
+```ts
+// data.ts — a stale link is a stale link, not a server fault
+if (rows.length === 0) {
+  throw Object.assign(new Error("This trip no longer exists."), { status: 404 });
+}
+```
+
+A numeric `status` between 400 and 599 is answered as
+`{ ok: false, error: <message> }` with that status. **Anything else is re-thrown
+unchanged**, so an unexpected fault still reaches your host's own error handling — its
+logging, and whatever it maps a storage outage to — rather than a 500 nova invented. The
+page shows the message the loader wrote, falling back to `404 Not Found` when the body
+carries none.
+
+A loader that has nothing to return cannot express it by resolving to `null` — that is
+the loading state — so this throw is how "not found" is said.
+
+**A malformed request body is a 400.** `await req.json()` rejects on a body that is not
+JSON; that is the caller's mistake, and the generated action handler answers
+`400 {"ok":false,"error":"invalid JSON body"}` rather than letting it surface as a server
+error.
 
 ## Loader inputs
 
@@ -456,6 +509,26 @@ Codes are stable.
   your spec.
 
 ## Breaking changes
+
+### Since 0.1.0 — a page that fails one part at a time
+
+Behaviour, not types: nothing here can turn a build that passed into one that reports, and
+no spec or catalog changes. See [failing well](#failing-well).
+
+- **Loading and error states moved from the page to the section.** A page no longer
+  returns early; each data-bound section renders its own state in place. A host that
+  counted on exactly one `states.loading` on screen, or on a failed page being blank, will
+  see the chrome and the sections that did load instead. `states.loading` may now be
+  rendered more than once on one page, so it must stay cheap to render.
+- **A loader or action failure carries its own status.** A thrown value with a numeric
+  `status` (400–599) becomes that status and `{ ok: false, error }` rather than an
+  exception; **anything without one is re-thrown unchanged**, so a host's error handling
+  is untouched. **What a host may want to do:** a loader that throws for "not found" —
+  the only way to say it, since `null` is the loading state — should attach
+  `{ status: 404 }`, or it stays whatever the host makes of an unhandled throw.
+- **A malformed request body is a 400.** `POST /_actions/<name>` answers
+  `{"ok":false,"error":"invalid JSON body"}` with status 400 instead of throwing out of
+  the handler. A host wrapper that caught that throw will no longer see it.
 
 ### Since 0.1.0 — two type holes closed
 
@@ -582,9 +655,10 @@ is named after its action, so one page cannot hold two forms on the same action
 nova reports rather than guesses.
 
 **Loading is inferred from `value === null`, not from `state.loading`.** A
-page shows its loading component while any of its loaders has a null value.
+section shows the loading component while any loader it binds has a null value.
 A loader that legitimately resolves to `null` — `Promise<Trip | null>`, an
-ordinary signature — therefore pins the page on the loading state. The
+ordinary signature — therefore pins that section on the loading state; throw a
+`status`-carrying error instead (see [failing well](#failing-well)). The
 `loading` flag `useLoader` maintains is not read by any generated page.
 
 **A computed filter default is not a server-decided value.** `compute#currentMonth` runs
@@ -594,9 +668,11 @@ has nowhere to receive one. It is right for a clock-derived default and wrong fo
 anything a request would have to be asked for — a per-user preference, a tenant setting.
 Those belong in a loader.
 
-**Loading and error states are page-level, not per binding.** One slow
-loader blanks the whole page, and one failing loader replaces it with the
-error component. Per-binding states are not expressible.
+**A section is the unit that degrades, not a binding.** A section renders its
+error state where any loader it binds failed and its loading state where any of
+them has not answered, so two loaders on one section share a fate even when only
+one of them is missing. Nothing renders half a section, and a section cannot say
+"show the table without the total".
 
 **A generic *section* component's type parameter is left to inference.** Nova writes a
 type argument for a field, because it knows the one type a field is about; a section has

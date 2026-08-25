@@ -89,7 +89,9 @@ describe("actions, compute bindings and nested children", () => {
     expect(views).toContain('import type { SaveTripInput } from "./types";');
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).toContain('"POST /_actions/saveTrip"');
-    expect(handlers).toContain("await actions.saveTrip(");
+    // The body is parsed through `body(req)` rather than a bare `await req.json()`,
+    // which is what turns a malformed body into a 400 instead of a 500.
+    expect(handlers).toContain("actions.saveTrip((await body(req)) as never)");
     // __contract.ts binds the action to its derived type, so a signature change in
     // actions.ts surfaces at the spec line that named it.
     const contract = result.files.find((f) => f.name === "__contract.ts")!.text;
@@ -472,7 +474,7 @@ describe("round trip", () => {
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
     expect(result.ok).toBe(true);
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
-    expect(handlers).toContain("await data.status()");
+    expect(handlers).toContain("respond(() => data.status())");
     expect(handlers).not.toContain("data.status(input");
   });
 
@@ -559,14 +561,14 @@ describe("a page shell", () => {
     expect(views).toContain('<PageShell title={"Trips"}>');
     expect(views).toContain("</PageShell>");
     expect(views).not.toContain("<>");
-    // The title stays visible while the page is loading or failed — the shell is the
-    // page, not a wrapper around the happy path only.
+    // Re-valued, and to a stronger claim than it made. It asserted that the shell was
+    // repeated around the two early returns that stood in for a failed or loading page;
+    // there are no early returns any more, so the shell — and the title — is on the one
+    // path the page has. What used to blank the whole page now degrades one section:
     expect(views).toContain(
-      'if (error) return <PageShell title={"Trips"}><ErrorNotice>{error}</ErrorNotice></PageShell>;',
+      '{trips.error !== null ? <ErrorNotice>{trips.error}</ErrorNotice> : trips.value === null ? <Loading /> : <Table',
     );
-    expect(views).toContain(
-      'if (monthlyTotal.value === null || trips.value === null) return <PageShell title={"Trips"}><Loading /></PageShell>;',
-    );
+    expect(views).not.toContain("if (error) return");
   });
 
   it("still emits a bare fragment for a host that configures no shell", async () => {

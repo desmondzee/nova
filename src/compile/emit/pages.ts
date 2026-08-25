@@ -310,24 +310,23 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
         formPath,
       );
     }
-    // The shell wraps everything the page can return, loading and error included: a
-    // title and the spacing around it are the page, not decoration on its happy path.
-    // Without a configured shell this is the bare fragment every page emitted before.
+    // The shell wraps the page, always: a title and the spacing around it are the page,
+    // not decoration on its happy path, and there is no longer any early return that
+    // could skip it. Without a configured shell this is the bare fragment every page
+    // emitted before.
+    //
+    // What used to stand here — `const error = a.error ?? b.error; if (error) return
+    // <ErrorNotice>` and a matching null gate — made every loader on a page a
+    // prerequisite for every part of it. A differential audit of a converted production
+    // app fault-injected one of five loaders into a 500 and lost the navigation, the
+    // header, the stats, every section and both forms; the hand-written original it
+    // replaced lost one panel. The states are rendered per section now (see emitSection),
+    // which is also why a page's first paint is its chrome rather than one spinner.
     const open =
       config.shell === undefined
         ? "<>"
         : `<${config.shell}${page.title === undefined ? "" : ` title={${JSON.stringify(page.title)}}`}>`;
     const close = config.shell === undefined ? "</>" : `</${config.shell}>`;
-    const wrap = (jsx: string) => (config.shell === undefined ? jsx : `${open}${jsx}${close}`);
-    if (used.length > 0) {
-      const anyError = used.map((n) => `${n}.error`).join(" ?? ");
-      const anyValueNull = used.map((n) => `${n}.value === null`).join(" || ");
-      e.line(`const error = ${anyError};`);
-      e.line(
-        `if (error) return ${wrap(`<${config.states.error}>{error}</${config.states.error}>`)};`,
-      );
-      e.line(`if (${anyValueNull}) return ${wrap(`<${config.states.loading} />`)};`);
-    }
     e.line("return (");
     e.indent().line(open, path);
     e.indent();
@@ -351,8 +350,34 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
       .join(" ");
   }
 
+  /**
+   * The conditional a section is rendered behind: its error state where its own data
+   * failed, its loading state where that data has not arrived, and the section itself
+   * otherwise. `""`/`""` for a section that binds no loader — chrome renders regardless.
+   *
+   * Written as a chain of `x.error !== null ? …` rather than one `a.error ?? b.error`
+   * test so that each branch *narrows*: `x.error` is a `string` inside the branch that
+   * renders it, and every `x.value` is non-null in the final branch, exactly as the
+   * page-level check narrowed them before. The narrowing is what keeps a component prop
+   * from receiving `null` and a wrong-typed binding a compile error at the spec line;
+   * nothing here casts.
+   */
+  function gate(section: SectionSpec): { open: string; close: string } {
+    const loaders = ownLoaders(section);
+    if (loaders.length === 0) return { open: "", close: "" };
+    const failed = loaders
+      .map(
+        (n) =>
+          `${n}.error !== null ? <${config.states.error}>{${n}.error}</${config.states.error}> : `,
+      )
+      .join("");
+    const waiting = loaders.map((n) => `${n}.value === null`).join(" || ");
+    return { open: `{${failed}${waiting} ? <${config.states.loading} /> : `, close: "}" };
+  }
+
   function emitSection(section: SectionSpec, path: SpecPath): void {
     const name = section.component.name;
+    const { open: before, close: after } = gate(section);
     const entries = new Map<string, string>();
     for (const p of Object.keys(section.props)) entries.set(p, expr(section.props[p]!));
     if (section.submit !== undefined) {
@@ -372,10 +397,10 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     const open = props === "" ? `<${name}` : `<${name} ${props}`;
     const fields = section.fields ?? [];
     if (fields.length === 0 && section.children.length === 0) {
-      e.line(`${open} />`, path);
+      e.line(`${before}${open} />${after}`, path);
       return;
     }
-    e.line(`${open}>`, path);
+    e.line(`${before}${open}>`, path);
     e.indent();
     // Both nested paths carry the component's own YAML key, because that is where the
     // document actually holds them: `sections[0].Panel.children[1]`. Without it,
@@ -387,7 +412,7 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     });
     section.children.forEach((child, i) => emitSection(child, [...path, key, "children", i]));
     e.dedent();
-    e.line(`</${name}>`, path);
+    e.line(`</${name}>${after}`, path);
   }
 
   /**
@@ -498,6 +523,24 @@ function pageNeedsSort(page: PageSpec): boolean {
 
 function usedLoaders(sections: SectionSpec[]): string[] {
   return collect(sections, "data");
+}
+
+/**
+ * The loaders one section reads *itself* — its own props and its own fields', not its
+ * children's. A child section carries its own gate, so a container that binds nothing
+ * (a panel, a toolbar) keeps rendering when a component inside it has no data: the unit
+ * that degrades is the section that actually needed the loader, which is as fine-grained
+ * as the spec can describe. Fields are the section's, not their own units, because the
+ * conditional wraps the whole element and the form shell has to stay with its inputs.
+ */
+function ownLoaders(section: SectionSpec): string[] {
+  const found = new Set<string>();
+  for (const props of [section.props, ...(section.fields ?? []).map((f) => f.props)]) {
+    for (const value of Object.values(props)) {
+      if (value.kind === "binding" && value.ref.kind === "data") found.add(value.ref.name);
+    }
+  }
+  return [...found].sort();
 }
 
 function collect(

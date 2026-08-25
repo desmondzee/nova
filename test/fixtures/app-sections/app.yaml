@@ -1,0 +1,15 @@
+pages:
+  "/":
+    title: Overview
+    filters:
+      month: { default: "2026-08" }
+    sections:
+      - StatCard: { label: Heading, value: "German mileage" }
+      - StatCard: { label: This month, value: data#monthlyTotal }
+      - Panel:
+          title: Activity
+          children:
+            - Table:
+                rows: data#trips
+                columns: [date, km]
+      - StatCard: { label: Policy, value: data#policy }

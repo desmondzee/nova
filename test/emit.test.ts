@@ -348,7 +348,9 @@ describe("zero-parameter loaders", () => {
 
   it("calls a zero-parameter loader's handler with no argument", () => {
     const { text } = emitHandlers(resolvedZeroParam(), zeroParamConfig);
-    expect(text).toContain("await data.status()");
+    // Re-valued for the `respond()` wrapper the handlers now run every body inside:
+    // the assertion is still "called with no argument", which is the whole point here.
+    expect(text).toContain("respond(() => data.status())");
     expect(text).not.toContain("data.status(input");
   });
 });

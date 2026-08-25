@@ -239,7 +239,21 @@ Four things a page may contain:
 These are declared, not written, because the survey in §1 shows them being
 re-solved dozens of times, often inconsistently:
 
-- **Loading and error states** for every `data#` binding (54 files today).
+- **Loading and error states** for every `data#` binding (54 files today), rendered
+  **per section**. Revised during implementation: they were emitted as two early
+  returns gating the whole page, which made every loader on a page a prerequisite for
+  every part of it — a differential audit of a converted production app fault-injected
+  one of five loaders into a 500 and lost the navigation, the header, the stats, every
+  section and both forms, where the hand-written original it replaced lost one panel.
+  Each section now renders behind its own conditional: `states.error` in place of the
+  section whose data failed, `states.loading` in place of the section still waiting,
+  and the section itself otherwise. A section that binds no loader — the chrome — is
+  not gated at all, which is also what gives the page a first paint worth rendering on
+  the server. The conditional is written per loader (`x.error !== null ? … : x.value
+  === null ? … : …`) rather than as one combined test, because each branch has to
+  *narrow*: `x.value` is non-null where the section reads it, exactly as the page-level
+  check made it, so a component prop still cannot receive `null` and a wrong-typed
+  binding is still a `NOVA3001` at the spec line.
 - **Empty states** (44 files today) — surveyed here, but *not* taken: a section
   knows whether its own rows are empty and nova does not, so this one stayed with
   the component (`states.empty` is optional config, checked and never rendered).
@@ -260,7 +274,7 @@ re-solved dozens of times, often inconsistently:
   a bare `<></>`, so a host had no parent to hang vertical rhythm on and put a
   `mt-4 first:mt-0` inside every catalog component instead — a layout concern pushed
   down into components, and a convention each host would invent for itself. Nova now
-  wraps every page (its loading and error states included) in a host-supplied
+  wraps every page — there is one return path now, so nothing can skip it — in a host-supplied
   `shell` component and hands it the page's `title:`. Under D3 that is still no
   component of nova's: the shell is a catalog name from config, resolved and checked
   like `states.loading`, and optional — without one the fragment is what it always
@@ -367,6 +381,17 @@ and the client-side fetch, loading state, error state and race guard in the page
 Because the loader's return type is real TypeScript, `rows: data#trips` is
 checked against the `Table` component's `rows` prop with no type asserted by hand.
 
+**A loader says what its failure is worth.** Added during implementation: the handler
+threw whatever the loader threw, so a stale detail link — a loader that has no row to
+return and cannot resolve to `null`, because `null` is the loading state — reached the
+reader as `500 Internal Server Error` where the hand-written original said
+`Couldn't load this travel: HTTP 404`. A thrown value carrying a numeric `status`
+between 400 and 599 is answered with that status and `{ ok: false, error: message }`;
+anything else is re-thrown **unchanged**, so an unexpected fault still reaches the host's
+own logging and its own envelope rather than one nova invented. `useLoader` reads that
+body, so the sentence the loader wrote is what the page shows, and falls back to
+`${r.status} ${r.statusText}` when there is none.
+
 Loader inputs are supplied from route params and filter values, checked against
 the loader's parameter type.
 
@@ -380,7 +405,9 @@ export async function saveTravel(input: TravelInput):
 
 The compiler generates the `POST` handler entry, the client call, the busy state,
 the confirmation dialog if `confirm:` is set, and the mapping of returned
-`fieldErrors` onto form fields.
+`fieldErrors` onto form fields. The body is parsed through the same status vocabulary:
+`await req.json()` rejects on a malformed body, which is the caller's mistake, and was
+being reported as a server error — it is a 400 with `invalid JSON body`.
 
 Every action needs its *input* type, and gets it the same derived way:
 `export type SaveTravelInput = Parameters<typeof actions.saveTravel>[0]`. A form indexes
