@@ -84,18 +84,29 @@ function columnLists(
 // assignment). The actual spec-to-code seam — whether a loader's return type or an
 // action's input type matches what the bound component prop expects — is covered by
 // pages.tsx's JSX, which is always one of the emitted, typechecked files.
+//
+// That is also why there is no *action* binding here any more. It was
+// `const _saveTrip: SaveTrip = actions.saveTrip` where `SaveTrip` is
+// `typeof actions.saveTrip` — an expression assigned to its own type, which no
+// assignability rule can reject. A loader's binding restates its shape
+// (`(input: …) => Promise<…>`) and so can fail; an action's restated nothing, and cost
+// two lines per action, an import of `actions`, and a `${Cap}` alias, in every app.
 export function emitContract(app: ResolvedApp, config: NovaConfig): EmittedFile {
   const e = new Emitter();
   e.line(HEADER);
   e.line("// Typechecked, never executed. Diagnostics here are remapped to the spec.");
   e.line();
   if (app.loaders.length > 0) e.line(`import * as data from "${appRel(app, config, "data")}";`);
-  if (app.actions.length > 0) e.line(`import * as actions from "${appRel(app, config, "actions")}";`);
-  const typeNames = [...app.loaders.flatMap((n) => [cap(n), `${cap(n)}Input`]), ...app.actions.map(cap)];
+  const typeNames = app.loaders.flatMap((n) => [cap(n), `${cap(n)}Input`]);
   if (typeNames.length > 0) {
     e.line(`import type { ${[...new Set(typeNames)].sort().join(", ")} } from "${rel(config, "./types")}";`);
   }
   e.line();
+  // Each binding is a local, and a local nothing reads fails a host with
+  // `noUnusedLocals` — so they are discarded together, in one statement at the end,
+  // rather than one `void _x;` line each. That halved this file in the apps that have
+  // most of it: a page's worth of loaders used to emit a discard line apiece.
+  const discards: string[] = [];
   for (const name of app.loaders) {
     // Mapped to the first spec binding that referenced this loader, not a
     // ["loaders", name] path — that path doesn't exist in the YAML document, so
@@ -104,11 +115,7 @@ export function emitContract(app: ResolvedApp, config: NovaConfig): EmittedFile 
       `const _${name}: (input: ${cap(name)}Input) => Promise<${cap(name)}> = data.${name};`,
       app.loaderOrigins[name],
     );
-    e.line(`void _${name};`);
-  }
-  for (const name of app.actions) {
-    e.line(`const _${name}: ${cap(name)} = actions.${name};`, app.actionOrigins[name]);
-    e.line(`void _${name};`);
+    discards.push(`_${name}`);
   }
 
   // Every column list against the *row type*, not against a prop that happens to be
@@ -140,8 +147,12 @@ export function emitContract(app: ResolvedApp, config: NovaConfig): EmittedFile 
         `const ${check.name}: ReadonlyArray<keyof NovaRowOf<${check.row}> & string> = ${JSON.stringify(check.columns)};`,
         check.at,
       );
-      e.line(`void ${check.name};`);
+      discards.push(check.name);
     }
+  }
+  if (discards.length > 0) {
+    e.line();
+    e.line(`void [${discards.join(", ")}];`);
   }
   return { name: "__contract.ts", text: e.text(), map: e.map() };
 }

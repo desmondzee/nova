@@ -203,19 +203,22 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     ...(useSort ? ["useSort"] : []),
   ];
   if (hooks.length > 0) e.line(`import { ${hooks.join(", ")} } from "${rel(config, "./runtime")}";`);
-  for (const name of app.loaders) {
-    const names =
-      app.loaderArity[name] === 0 ? cap(name) : `${cap(name)}, ${cap(name)}Input`;
-    e.line(`import type { ${names} } from "${rel(config, "./types")}";`);
-  }
-  // An action bound to an ordinary prop also needs its own *type* — `useAction`'s second
-  // argument is `Awaited<ReturnType<…>>`, which is what carries the action's answer out
-  // to the component. A form's action needs only its input, and importing a type it never
-  // names would fail a host with `noUnusedLocals`.
-  const propActions = new Set(app.spec.pages.flatMap((p) => collect(p.sections, "actions")));
-  for (const name of app.actions) {
-    const names = propActions.has(name) ? `${cap(name)}, ${cap(name)}Input` : `${cap(name)}Input`;
-    e.line(`import type { ${names} } from "${rel(config, "./types")}";`);
+  // One statement, not one per binding. They all come from the same module, and an app
+  // with a dozen loaders and actions opened its views.tsx with a dozen identical import
+  // lines. Sorted, so the statement is byte-identical across runs.
+  //
+  // A zero-parameter loader names only its result type. An action bound to an ordinary
+  // prop also needs its own type — `useAction`'s second argument is
+  // `Awaited<ReturnType<…>>`, which carries the action's answer out to the component —
+  // while a form's action needs only its input, and importing a type it never names
+  // would fail a host with `noUnusedLocals`.
+  const propActions = new Set(app.propActions);
+  const typeNames = [
+    ...app.loaders.flatMap((n) => (app.loaderArity[n] === 0 ? [cap(n)] : [cap(n), `${cap(n)}Input`])),
+    ...app.actions.flatMap((n) => (propActions.has(n) ? [cap(n), `${cap(n)}Input`] : [`${cap(n)}Input`])),
+  ];
+  if (typeNames.length > 0) {
+    e.line(`import type { ${[...new Set(typeNames)].sort().join(", ")} } from "${rel(config, "./types")}";`);
   }
   e.line();
 

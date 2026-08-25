@@ -61,6 +61,16 @@ export type ResolvedApp = {
   /** Actions reached through a form's `submit:`, in sorted order. Only these need an
    * `${Cap}Input` type emitted, since only a form indexes into the action's input. */
   formActions: string[];
+  /**
+   * Actions bound to an ordinary component prop, in sorted order.
+   *
+   * The one thing that names an action's own `${Cap}` type is `useAction`'s
+   * `Awaited<ReturnType<…>>`, and only a prop binding is hoisted into a `useAction` — a
+   * form reaches its action through `useForm<${Cap}Input>` and never names the other
+   * half. Emitting `${Cap}` for every action therefore put a line no emitted file
+   * imported into every app with a form.
+   */
+  propActions: string[];
   /** Parameter count of each action's underlying actions.ts export, for the same
    * empty-tuple reason `loaderArity` exists. */
   actionArity: Record<string, number>;
@@ -155,6 +165,7 @@ export function resolveApp(
   const loaderArity: Record<string, number> = {};
   const loaderInputKeys: Record<string, string[] | null> = {};
   const formActions = new Set<string>();
+  const propActions = new Set<string>();
   const actionArity: Record<string, number> = {};
   const componentTypeParams: Record<string, { total: number; required: number }> = {};
   const loaderOrigins: Record<string, SpecPath> = {};
@@ -347,6 +358,7 @@ export function resolveApp(
           loaderArity,
           loaderInputKeys,
           formActions: sorted(formActions),
+          propActions: sorted(propActions),
           actionArity,
           componentTypeParams,
           loaderOrigins,
@@ -499,6 +511,7 @@ export function resolveApp(
           report("NOVA2003", `actions.ts has no export '${ref.name}'`, propAt, actionExports, ref.name);
         } else {
           actions.add(ref.name);
+          propActions.add(ref.name);
           // Recorded for every action, not only a form's: `useAction<XInput>` is what
           // makes a prop-bound action's payload a checked value, and a zero-parameter
           // action has no element in its `Parameters<...>` tuple to name.

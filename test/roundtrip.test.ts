@@ -86,17 +86,26 @@ describe("actions, compute bindings and nested children", () => {
     // The action's own input type, imported for the purpose: an action bound to a plain
     // prop used to reach the component as a `(input: unknown) => …`, which every callback
     // shape accepted. Its own type comes with it, because `run` now resolves the action's
-    // own result rather than a boolean nova reduced it to.
-    expect(views).toContain('import type { SaveTrip, SaveTripInput } from "./types";');
+    // own result rather than a boolean nova reduced it to. Asserted as the whole import
+    // statement: every type views.tsx names comes from ./types in one line, so this pins
+    // both halves of the action's pair *and* that nothing else rode along.
+    expect(views).toContain(
+      'import type { Distance, DistanceInput, Rows, RowsInput, SaveTrip, SaveTripInput } from "./types";',
+    );
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).toContain('"POST /_actions/saveTrip"');
     // The body is parsed through `body(req)` rather than a bare `await req.json()`,
     // which is what turns a malformed body into a 400 instead of a 500.
     expect(handlers).toContain("actions.saveTrip((await body(req)) as never)");
-    // __contract.ts binds the action to its derived type, so a signature change in
-    // actions.ts surfaces at the spec line that named it.
+    // __contract.ts binds the loaders and nothing else. An action's binding was
+    // `const _saveTrip: SaveTrip = actions.saveTrip` where `SaveTrip` *is*
+    // `typeof actions.saveTrip` — an expression assigned to its own type, which no
+    // assignability rule can reject. With it gone the `actions` import has to go too, or
+    // every app would carry an unused import into a host with `noUnusedLocals`.
     const contract = result.files.find((f) => f.name === "__contract.ts")!.text;
-    expect(contract).toContain("const _saveTrip: SaveTrip = actions.saveTrip;");
+    expect(contract).toContain("const _rows: (input: RowsInput) => Promise<Rows> = data.rows;");
+    expect(contract).not.toContain("import * as actions");
+    expect(contract).not.toContain("_saveTrip");
     // useAction is now emitted because this app binds one — and only because of that.
     const runtime = result.files.find((f) => f.name === "runtime.tsx")!.text;
     expect(runtime).toContain("export function useAction");
