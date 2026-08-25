@@ -4,7 +4,7 @@ import { join, resolve } from "node:path";
 import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
 import { validate } from "../schema/validate.js";
 import { readCatalogs } from "./catalog.js";
-import type { NovaConfig } from "./config.js";
+import { validateConfig, type NovaConfig } from "./config.js";
 import {
   emitContract,
   emitHandlers,
@@ -15,7 +15,7 @@ import {
   type EmittedFile,
 } from "./emit/index.js";
 import { loadSpecFile } from "./load.js";
-import type { ProgramSession } from "./program.js";
+import { typescriptDefect, type ProgramSession } from "./program.js";
 import { resolveApp } from "./resolve.js";
 import { typecheckEmitted } from "./typecheck.js";
 
@@ -107,8 +107,35 @@ export async function compileApp(
   // NOVA3001/NOVA3002 — a compiler answering `ok: true` on output that does not
   // compile. The README's own example passed a relative path, so that was the
   // documented way to use it.
+  // Before anything reads the arguments: an appDir that is not a string is the one way
+  // to make `resolve` itself throw, and there is no position to report a diagnostic at
+  // until it has been resolved.
+  if (typeof appDirArg !== "string" || appDirArg === "") {
+    return fail([
+      diagnostic(
+        "NOVA2014",
+        `the app folder is ${typeof appDirArg === "string" ? "empty" : typeof appDirArg}, not a path`,
+        { file: "nova.config", line: 1, col: 1 },
+      ),
+    ]);
+  }
   const appDir = resolve(appDirArg);
   const specFile = join(appDir, "app.yaml");
+
+  // Both of these are about the toolchain rather than the app, and both are cheap, so
+  // they are answered before a byte of the spec is read: a run that cannot possibly
+  // succeed should say why in its own terms, not fail later inside somebody else's.
+  const defect = typescriptDefect();
+  if (defect !== null) {
+    return fail([
+      diagnostic("NOVA2013", defect, { file: specFile, line: 1, col: 1 }, {
+        hint: "nova supports typescript >=5.5 <7; install one alongside it",
+      }),
+    ]);
+  }
+  const configDiags = validateConfig(config, { file: specFile, line: 1, col: 1 });
+  if (configDiags.length > 0) return fail(configDiags);
+
   if (!existsSync(specFile)) {
     return fail([
       diagnostic("NOVA1006", "no app.yaml in this app folder", { file: specFile, line: 1, col: 1 }),

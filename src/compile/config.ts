@@ -1,3 +1,5 @@
+import { diagnostic, type Diagnostic, type Position } from "../schema/diagnostic.js";
+
 export type NovaConfig = {
   /** Module specifiers whose capitalised callable exports are usable in specs. */
   components: string[];
@@ -39,3 +41,118 @@ export type NovaConfig = {
    */
   basePath?: string;
 };
+
+/** The `importExtension` values the emitter knows how to write. */
+const IMPORT_EXTENSIONS = ["", ".js"] as const;
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+const isNonEmptyString = (v: unknown): v is string => typeof v === "string" && v !== "";
+
+/**
+ * Checks the host's `NovaConfig` before any of it is used.
+ *
+ * `NovaConfig` is a TypeScript type, and a type checks nothing for a host that builds
+ * its config in JavaScript, reads it from JSON or YAML, or assembles it from the
+ * environment. Every field here is read by a different stage, so an omitted one used to
+ * surface as whatever that stage happened to do with `undefined`: a missing `states`
+ * was a `TypeError` inside the emitter, a missing `outDir` a `TypeError` from
+ * `node:path`, and a missing `tsconfigPath` an `Error: Debug Failure.` thrown from
+ * inside `typescript.js` — an internal compiler assertion naming neither nova, nor the
+ * config, nor the field. That is the first thing a new host gets wrong and it was the
+ * least actionable message nova could produce.
+ *
+ * Reported as `NOVA2014`: the block is where facts about the host's own configuration
+ * already live (`NOVA2000` for a `components:` entry that does not resolve, `NOVA2011`
+ * for a `tsconfigPath` that does not parse), and this is the same kind of fact,
+ * answered one stage earlier.
+ *
+ * Every problem is reported, not just the first, so a host fixing a config by hand sees
+ * the whole list in one run.
+ */
+export function validateConfig(config: unknown, at: Position): Diagnostic[] {
+  const bad = (message: string, hint?: string) =>
+    diagnostic("NOVA2014", message, at, hint === undefined ? {} : { hint });
+
+  if (!isRecord(config)) {
+    return [
+      bad(
+        `nova.config is ${config === null ? "null" : typeof config}, not an object`,
+        "pass a NovaConfig: { components, states, outDir, tsconfigPath }",
+      ),
+    ];
+  }
+
+  const out: Diagnostic[] = [];
+
+  if (!Array.isArray(config["components"])) {
+    out.push(
+      bad(
+        "nova.config is missing 'components'",
+        "an array of module specifiers whose components specs may name, e.g. ['@acme/ui']",
+      ),
+    );
+  } else if (!config["components"].every(isNonEmptyString)) {
+    out.push(bad("nova.config 'components' must be an array of module specifiers"));
+  }
+
+  const states = config["states"];
+  if (!isRecord(states)) {
+    out.push(
+      bad(
+        "nova.config is missing 'states'",
+        "{ loading, error } naming catalog components, and optionally 'empty'",
+      ),
+    );
+  } else {
+    for (const key of ["loading", "error"] as const) {
+      if (!isNonEmptyString(states[key])) {
+        out.push(bad(`nova.config is missing 'states.${key}'`, "name a component in a catalog"));
+      }
+    }
+    if (states["empty"] !== undefined && !isNonEmptyString(states["empty"])) {
+      out.push(bad("nova.config 'states.empty' must be a component name"));
+    }
+  }
+
+  if (!isNonEmptyString(config["outDir"])) {
+    out.push(
+      bad(
+        "nova.config is missing 'outDir'",
+        "a directory for emitted files, relative to the app folder — e.g. 'generated'",
+      ),
+    );
+  }
+
+  if (!isNonEmptyString(config["tsconfigPath"])) {
+    out.push(
+      bad(
+        "nova.config is missing 'tsconfigPath'",
+        "a path to the tsconfig used to resolve modules and typecheck emitted output",
+      ),
+    );
+  }
+
+  for (const key of ["shell", "basePath"] as const) {
+    if (config[key] !== undefined && typeof config[key] !== "string") {
+      out.push(bad(`nova.config '${key}' must be a string`));
+    }
+  }
+
+  const extension = config["importExtension"];
+  // Documented as `"" | ".js"` and "nothing else is accepted", which was true of the
+  // type and not of the runtime: `".mjs"` went straight into every emitted specifier and
+  // came back as nine NOVA3001/NOVA3002s about modules that do not exist. One config
+  // error is the honest answer.
+  if (extension !== undefined && !IMPORT_EXTENSIONS.includes(extension as "" | ".js")) {
+    out.push(
+      bad(
+        `nova.config 'importExtension' is ${JSON.stringify(extension)}`,
+        'the emitter writes "" (bundler resolution) or ".js" (node16/nodenext)',
+      ),
+    );
+  }
+
+  return out;
+}

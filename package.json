@@ -33,7 +33,7 @@
     "yaml": "^2.9.0"
   },
   "peerDependencies": {
-    "typescript": ">=5.5"
+    "typescript": ">=5.5 <7"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

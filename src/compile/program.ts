@@ -1,6 +1,61 @@
 import { dirname } from "node:path";
 import ts from "typescript";
 
+/**
+ * The `typescript` entry points nova calls. Everything else it touches is a type, and
+ * types are erased — these are the whole of the runtime surface, so this list is what
+ * "a TypeScript nova can drive" means.
+ */
+const REQUIRED_API = [
+  "createCompilerHost",
+  "createProgram",
+  "flattenDiagnosticMessageText",
+  "isTypeParameterDeclaration",
+  "parseJsonConfigFileContent",
+  "readConfigFile",
+  "resolveModuleName",
+  "sys",
+] as const;
+
+/**
+ * Which of `REQUIRED_API` the given `typescript` namespace does not provide.
+ *
+ * Nova's peer range is `>=5.5 <7`, but a range only constrains what a package manager
+ * installs — it cannot constrain what is already in a host's `node_modules`, or what a
+ * host resolves through an alias, a workspace link or a bundled copy. TypeScript 7's
+ * main entry exports `version` and `versionMajorMinor` and nothing else (the compiler
+ * API moved), so an unguarded nova met it as `TypeError: Cannot read properties of
+ * undefined (reading 'fileExists')` thrown from inside nova's own `node_modules` —
+ * which reads as nova being broken rather than as nova being paired with a TypeScript
+ * it does not support.
+ *
+ * Kept as a pure function over an arbitrary namespace object so the unsupported case is
+ * testable without installing an unsupported TypeScript.
+ */
+export function missingCompilerApi(api: unknown): string[] {
+  if (typeof api !== "object" || api === null) return [...REQUIRED_API];
+  const record = api as Record<string, unknown>;
+  return REQUIRED_API.filter((name) =>
+    name === "sys"
+      ? typeof record["sys"] !== "object" || record["sys"] === null
+      : typeof record[name] !== "function",
+  );
+}
+
+/**
+ * A sentence naming what is wrong with the resolved TypeScript, or `null` when it is
+ * one nova can drive. Reported by `compileApp` as `NOVA2013` rather than thrown: a host
+ * that prints diagnostics should be told this the same way it is told about an
+ * unreadable tsconfig, and the answer is the same shape — fix the toolchain, not the
+ * spec.
+ */
+export function typescriptDefect(): string | null {
+  const missing = missingCompilerApi(ts);
+  if (missing.length === 0) return null;
+  const version = typeof ts?.version === "string" ? ts.version : "unknown";
+  return `the resolved 'typescript' (${version}) does not provide the compiler API nova needs (missing: ${missing.join(", ")})`;
+}
+
 export type ExportInfo = {
   name: string;
   callable: boolean;

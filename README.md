@@ -11,8 +11,12 @@ React — never nova.
 ## Install
 
 ```bash
-pnpm add -D @desmondzee/nova typescript
+pnpm add -D @desmondzee/nova 'typescript@>=5.5 <7'
 ```
+
+The version bound is not decoration: TypeScript 7's main entry does not export the
+compiler API at all, so it is outside nova's peer range and nova refuses it by name. See
+[Requirements](#requirements).
 
 There is no root export. Import from a subpath:
 
@@ -738,7 +742,8 @@ Codes are stable.
   while also having a sortable section — the next free number in the block, and
   in it because the collision is between two names the spec itself writes, `?sort=`
   and `?dir=` being nova's own two query parameters.
-- `NOVA2xxx` — name resolution: an unknown component, a missing catalog
+- `NOVA2xxx` — name resolution, and the facts about your `NovaConfig` and your
+  toolchain that name resolution depends on: an unknown component, a missing catalog
   module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, a
   filter/route parameter reference that doesn't match its page, or one name
   bound to two different things — `NOVA2009` where the spec binds one name two
@@ -752,6 +757,22 @@ Codes are stable.
   for a field (the type of the input key it edits) and a parameter left to
   inference is a parameter whose constraints may silently stop applying, so
   it is reported rather than emitted half-instantiated.
+  The four codes after it are the block's config-and-toolchain half, which
+  `NOVA2000` (a `components:` entry that does not resolve) and `NOVA2011` (a
+  `tsconfigPath` that does not parse) already belonged to:
+  `NOVA2013` is a resolved `typescript` that does not provide the compiler API
+  nova drives — a TypeScript 7 pulled in past the peer range, or a linked or
+  aliased copy a range cannot reach; it names the version and the missing entry
+  points.
+  `NOVA2014` is a `NovaConfig` field that is missing or of the wrong type —
+  `NovaConfig` is a TypeScript type, and a type checks nothing for a host that
+  builds its config in JavaScript or reads it from JSON, so every field is checked
+  before it is used and every problem is reported in one run.
+  `NOVA2015` is an app module whose filename differs in case from `data.ts`,
+  `actions.ts` or `compute.ts` — resolution again, and the one kind of it that a
+  case-insensitive filesystem answers `yes` to and a case-sensitive one does not.
+  `NOVA2016` is a file at one of the six output names that nova did not write —
+  a fact about `outDir`, answered at the moment the write would have destroyed it.
 - `NOVA3xxx` — a problem TypeScript found in the emitted output. `NOVA3001` is
   remapped back to the YAML line that produced it; `NOVA3002` is reported at
   the generated location instead, because it has no traceable spec origin —
@@ -1117,5 +1138,16 @@ recompilation when only those change.
 
 ## Requirements
 
-Node ≥ 20, TypeScript ≥ 5.5 (a peer dependency — nova uses yours, so its answers
-match your own `tsc`).
+Node ≥ 20, and TypeScript ≥ 5.5 and < 7 — a peer dependency, because nova uses yours, so
+its answers match your own `tsc`.
+
+The upper bound is real, not caution. TypeScript 7's main entry exports `version` and
+`versionMajorMinor` and nothing else: the compiler API nova drives is not reachable
+through it. Nova checks the TypeScript it actually resolved before it reads your spec
+and answers `NOVA2013` naming the version and the missing entry points, rather than
+throwing out of its own `node_modules`. 5.5 through 6.x are supported; `pnpm add -D
+typescript@6` if your project is on 7 for its own build.
+
+Nova is ESM-only: `"type": "module"`, no `require` export condition. A CommonJS build
+script cannot load it, and `require()` of an ESM module fails outright on Node 20.0–20.18
+even though those satisfy `engines`.
