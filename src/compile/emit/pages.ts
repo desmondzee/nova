@@ -206,7 +206,7 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
       app.loaderArity[name] === 0 ? cap(name) : `${cap(name)}, ${cap(name)}Input`;
     e.line(`import type { ${names} } from "${rel(config, "./types")}";`);
   }
-  for (const name of app.formActions) {
+  for (const name of app.actions) {
     e.line(`import type { ${cap(name)}Input } from "${rel(config, "./types")}";`);
   }
   e.line();
@@ -277,9 +277,16 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
       );
     }
     const options = optionsByAction(page.sections);
+    // The type argument is what makes an action bound to an ordinary prop checked.
+    // `run` was declared `(input: unknown) => Promise<boolean>`, and an `unknown`
+    // parameter is assignable to every callback shape there is — so `onDelete={
+    // deleteTripAction.run}` type-checked against `(row: Trip) => void` whatever the
+    // action actually accepted. With the action's own input type it is the ordinary
+    // contravariant check, reported at the spec line that bound it.
     for (const name of usedActions) {
       e.line(
-        `const ${name}Action = useAction("${urlFor(config, "_actions", name)}"${optsArg(options.get(name))});`,
+        `const ${name}Action = useAction<${cap(name)}Input>("${urlFor(config, "_actions", name)}"${optsArg(options.get(name))});`,
+        app.actionOrigins[name],
       );
     }
     // One sort state per page (NOVA1011 rejects a second sortable section), hoisted like
@@ -391,6 +398,12 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
    * the action does not accept is three type errors on this one line, all remapped to
    * this field's own line in the spec. Indexed rather than dotted access so a key that
    * is not a JavaScript identifier still emits valid, still-checked code.
+   *
+   * A **generic** field component is written with its type argument rather than left to
+   * inference. A type parameter no supplied prop mentions is not inferred from anything;
+   * it resolves to something that makes every constraint derived from it vacuous, and
+   * the check the generic exists for disappears without a word. Nova knows the one type
+   * a field is about — the type of the input key it edits — so it writes it.
    */
   function emitField(field: FieldSpec, action: string, path: SpecPath): void {
     const form = formLocal(action);
@@ -403,7 +416,11 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     // rather than a silent coercion.
     entries.set("onChange", `(value) => ${form}.set(${key}, value)`);
     entries.set("error", `${form}.errors[${key}]`);
-    e.line(`<${field.component.name} ${attrs(entries)} />`, path);
+    const typeArgs =
+      (app.componentTypeParams[componentKey(field.component)]?.total ?? 0) === 0
+        ? ""
+        : `<${cap(action)}Input[${key}]>`;
+    e.line(`<${field.component.name}${typeArgs} ${attrs(entries)} />`, path);
   }
 }
 

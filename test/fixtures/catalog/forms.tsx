@@ -17,12 +17,19 @@ export function Panel(props: {
   );
 }
 
-export function ActionButton(props: {
+/**
+ * A button that runs one action. Generic in the payload it submits, so the action's own
+ * declared input type is what decides whether a `payload:` is acceptable — `onSubmit`
+ * used to be declared `(input: unknown) => Promise<boolean>`, which every action there
+ * is satisfied and nothing about the payload was ever checked.
+ */
+export function ActionButton<T>(props: {
   label: string;
-  onSubmit: (input: unknown) => Promise<boolean>;
+  payload: T;
+  onSubmit: (input: T) => Promise<boolean>;
 }): React.ReactElement {
   return (
-    <button type="button" onClick={() => void props.onSubmit({})}>
+    <button type="button" onClick={() => void props.onSubmit(props.payload)}>
       {props.label}
     </button>
   );
@@ -203,6 +210,82 @@ export function ChoiceField<T extends string>(props: {
           {o.label}
         </button>
       ))}
+      {props.error === undefined ? null : <em>{props.error}</em>}
+    </label>
+  );
+}
+
+/**
+ * A table with a per-row action — the shape the survey found across every app in the
+ * corpus, and the one an `actions#` binding outside a form reaches. `onDelete` takes the
+ * row, so the action bound to it has to accept a row.
+ */
+export function RowActions(props: {
+  rows: ReadonlyArray<{ id: string; date: string }>;
+  onDelete: (row: { id: string; date: string }) => void;
+}): React.ReactElement {
+  return (
+    <ul>
+      {props.rows.map((r) => (
+        <li key={r.id}>
+          <button type="button" onClick={() => props.onDelete(r)}>
+            {r.date}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Keys of `T` that hold booleans — the only kind a toggle can drive. */
+type BooleanKeys<T> = { [K in keyof T]: T[K] extends boolean ? K : never }[keyof T] & string;
+
+/**
+ * A field generic in a *record* rather than in the value it carries: `T` appears only
+ * inside `keys`, through a mapped type, so nothing nova supplies can infer it. Invoked
+ * with no type argument, `BooleanKeys<T>` accepts any string at all and the check the
+ * generic exists for is silently gone — which is why nova writes the type argument for a
+ * generic field, and why a field component that is not generic in its value fails.
+ */
+export function ToggleGroupField<T extends object>(props: {
+  name: string;
+  label: string;
+  keys: ReadonlyArray<BooleanKeys<T>>;
+  value: string;
+  onChange: (value: string) => void;
+  error?: string;
+}): React.ReactElement {
+  return (
+    <label htmlFor={props.name}>
+      {props.label}
+      <button type="button" onClick={() => props.onChange(props.value)}>
+        {props.keys.join(",")}
+      </button>
+      {props.error === undefined ? null : <em>{props.error}</em>}
+    </label>
+  );
+}
+
+/**
+ * A field asking for two type arguments. Nova has exactly one to give — the type of the
+ * input key the field edits — and a type parameter it leaves to inference is a parameter
+ * whose constraints may quietly stop applying, so this is reported (NOVA2012) rather than
+ * emitted half-instantiated.
+ */
+export function PairField<A extends string, B extends string>(props: {
+  name: string;
+  label: string;
+  value: A;
+  onChange: (value: A) => void;
+  hints: readonly B[];
+  error?: string;
+}): React.ReactElement {
+  return (
+    <label htmlFor={props.name}>
+      {props.label}
+      <button type="button" onClick={() => props.onChange(props.value)}>
+        {props.hints.join(",")}
+      </button>
       {props.error === undefined ? null : <em>{props.error}</em>}
     </label>
   );

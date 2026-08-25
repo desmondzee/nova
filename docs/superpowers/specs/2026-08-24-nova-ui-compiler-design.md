@@ -337,6 +337,19 @@ union with nothing cast and nothing silenced: an option outside the union is sti
 NOVA3001 at that field's spec line. `forwardRef` was already fine (it has a call
 signature) and is likewise not forbidden.
 
+**Revised again: a *field*’s type argument is written, not inferred.** Relaxing the rule
+opened a hole of its own. A type parameter that none of the props nova supplies mentions
+has nothing to infer from; it resolves to its constraint, and every type derived from it
+— `BooleanKeys<T>`, `Record<T, string>` — stops constraining anything, with no diagnostic
+to say the check has gone. The survey found `PolicyForm<TPolicy>` compiling with an
+invented `toggles` key for exactly that reason. Nova knows the one type a field is about
+— the type of the input key it edits — so it now writes it: `<ChoiceField<SaveTripInput["vehicle"]> … />`.
+The rule that leaves behind is narrower and statable: **a generic field component is
+generic in the value it carries**, one type parameter (extras must have defaults, or it
+is NOVA2012). A *section* has no such type and is still left to inference, which is right
+where the parameter is reachable from a bound prop (`rows: data#trips` fixing a table’s
+row type) and is a known blind spot where it is not — see the README’s limitations.
+
 ### 6.2 Data — `data#trips`
 
 The app writes typed loaders:
@@ -369,10 +382,20 @@ The compiler generates the `POST` handler entry, the client call, the busy state
 the confirmation dialog if `confirm:` is set, and the mapping of returned
 `fieldErrors` onto form fields.
 
-A form additionally needs the action's *input* type, and gets it the same derived way:
-`export type SaveTravelInput = Parameters<typeof actions.saveTravel>[0]`, emitted only for
-an action a form submits. An action bound to a plain prop reaches its component as `.run`
-and never indexes into its input, so no `Input` alias is emitted for one.
+Every action needs its *input* type, and gets it the same derived way:
+`export type SaveTravelInput = Parameters<typeof actions.saveTravel>[0]`. A form indexes
+into it (`useForm<SaveTravelInput>`); an action bound to a plain prop is hoisted as
+`useAction<SaveTravelInput>` so that `.run` is `(input: SaveTravelInput) => Promise<boolean>`.
+
+**Revised during implementation: `run` used to take `unknown`.** No `Input` alias was
+emitted for a prop-bound action, on the reasoning that only a form indexes into the
+input. That made the one non-form action binding wholly unchecked: an `unknown` parameter
+is assignable to *every* callback shape, so `onDelete={deleteTripAction.run}` type-checked
+against `(row: Trip) => void`, `(id: string, n: number) => void` and
+`(p: { year: number }) => void` alike. The alias costs one line per action in `types.ts`
+and one import; what it buys is the ordinary contravariant check, reported at the spec
+line that bound it. `run` is declared as a property rather than a method so that check is
+contravariant rather than bivariant.
 
 ### 6.4 Pure functions — `compute#formatKm`
 

@@ -79,8 +79,14 @@ describe("actions, compute bindings and nested children", () => {
     const appDir = app("app-actions");
     const result = await compileApp(appDir, withForms(appDir));
     const views = result.files.find((f) => f.name === "views.tsx")!.text;
-    expect(views).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
+    expect(views).toContain(
+      'const saveTripAction = useAction<SaveTripInput>("/_actions/saveTrip");',
+    );
     expect(views).toContain("onSubmit={saveTripAction.run}");
+    // The action's own input type, imported for the purpose: an action bound to a plain
+    // prop used to reach the component as a `(input: unknown) => …`, which every callback
+    // shape accepted.
+    expect(views).toContain('import type { SaveTripInput } from "./types";');
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).toContain('"POST /_actions/saveTrip"');
     expect(handlers).toContain("await actions.saveTrip(");
@@ -319,7 +325,7 @@ describe("confirmation before a destructive action", () => {
     expect(result.ok).toBe(true);
     const views = result.files.find((f) => f.name === "views.tsx")!.text;
     expect(views).toContain(
-      'const deleteTripAction = useAction("/_actions/deleteTrip", { confirm: "Delete this trip?" });',
+      'const deleteTripAction = useAction<DeleteTripInput>("/_actions/deleteTrip", { confirm: "Delete this trip?" });',
     );
     // Consumed by nova rather than forwarded — ActionButton declares no `confirm` prop.
     expect(views).not.toContain("confirm={");
@@ -329,7 +335,9 @@ describe("confirmation before a destructive action", () => {
     const appDir = app("app-actions");
     const result = await compileApp(appDir, withForms(appDir));
     const views = result.files.find((f) => f.name === "views.tsx")!.text;
-    expect(views).toContain('const saveTripAction = useAction("/_actions/saveTrip");');
+    expect(views).toContain(
+      'const saveTripAction = useAction<SaveTripInput>("/_actions/saveTrip");',
+    );
   });
 });
 
@@ -668,5 +676,86 @@ describe("a computed filter default", () => {
     const bad = result.diagnostics.find((d) => d.code === "NOVA2004");
     expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
     expect(bad!.hint).toContain("currentMonth");
+  });
+});
+
+describe("an action bound outside a form", () => {
+  // The survey's finding: `expr()` emits an `actions#x` prop as `xAction.run`, and `run`
+  // was declared `(input: unknown) => Promise<boolean>`. An `unknown` parameter is
+  // assignable to every callback shape there is, so a per-row action bound to any prop of
+  // any component type-checked whatever the component actually passed it — the one
+  // non-form action binding was wholly unchecked.
+
+  it("compiles when the action accepts the row the component hands it", async () => {
+    const appDir = app("app-row-action");
+    const result = await compileApp(appDir, {
+      ...withForms(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    // The action's own input type is the type argument, and that is the whole mechanism.
+    expect(views).toContain(
+      'const deleteTripAction = useAction<DeleteTripInput>("/_actions/deleteTrip");',
+    );
+    expect(views).toContain("onDelete={deleteTripAction.run}");
+  });
+
+  it("reports a per-row action whose input the component's callback cannot supply", async () => {
+    const appDir = app("app-row-action");
+    edit(appDir, "onDelete: actions#deleteTrip", "onDelete: actions#archiveTrip");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.file).toBe(join(appDir, "app.yaml"));
+    // The section that bound it, not a generated line. A section's props are emitted as
+    // one JSX line, so a section-prop error lands on the section's own line — a field's
+    // lands on the field's (below), which is the finer granularity forms need.
+    expect(bad!.line).toBe(4);
+    expect(bad!.message).toContain("tripId");
+  });
+});
+
+describe("a generic field component", () => {
+  // A generic invoked with no type argument resolves its parameter by inference, and a
+  // parameter no supplied prop mentions resolves to something that makes every constraint
+  // derived from it vacuous — `BooleanKeys<T>` accepting any string at all. Withdrawing
+  // the "props must not be generic" rule is what let a field reach that state.
+
+  it("writes the type argument nova knows, so the key's own type decides", async () => {
+    const appDir = app("app-union");
+    const result = await compileApp(appDir, withForms(appDir));
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain('<ChoiceField<SaveTripInput["vehicle"]> ');
+    // A non-generic field is written exactly as it always was.
+    expect(views).toContain('<TextField error=');
+  });
+
+  it("reports a field whose component cannot carry the key's type", async () => {
+    const appDir = app("app-generic-field");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.file).toBe(join(appDir, "app.yaml"));
+    // The field's own line, not the form's and not a generated one.
+    expect(bad!.line).toBe(8);
+  });
+
+  it("reports a field component asking for a type argument nova does not have", async () => {
+    // Two type parameters, one type to give. Emitting it with the second left to
+    // inference is exactly the state this fix exists to remove, so it is reported at the
+    // field instead — NOVA2012, answered by reading the catalog export and nothing else.
+    const appDir = app("app-generic-field");
+    edit(appDir, "            - ToggleGroupField:", "            - PairField:");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA2012");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.file).toBe(join(appDir, "app.yaml"));
+    expect(bad!.line).toBe(8);
+    expect(bad!.message).toContain("PairField");
   });
 });

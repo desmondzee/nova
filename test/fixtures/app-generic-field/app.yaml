@@ -1,0 +1,11 @@
+pages:
+  "/":
+    sections:
+      - Form:
+          submit: actions#savePolicy
+          fields:
+            - TextField: { name: notes, label: Notes }
+            - ToggleGroupField:
+                name: basis
+                label: Basis
+                keys: [totallyBogus]

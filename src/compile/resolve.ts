@@ -44,9 +44,20 @@ export type ResolvedApp = {
   /** Actions reached through a form's `submit:`, in sorted order. Only these need an
    * `${Cap}Input` type emitted, since only a form indexes into the action's input. */
   formActions: string[];
-  /** Parameter count of each form action's underlying actions.ts export, for the same
+  /** Parameter count of each action's underlying actions.ts export, for the same
    * empty-tuple reason `loaderArity` exists. */
   actionArity: Record<string, number>;
+  /**
+   * Type parameters of each component the spec binds, keyed by the reference as written
+   * (`ChoiceField`, `./views/fields#DecimalField`).
+   *
+   * Only a *field* is emitted with a type argument, and only because nova knows what it
+   * should be — the type of the action-input key the field edits. A generic component
+   * invoked with none resolves its parameter by inference, and a parameter no supplied
+   * prop mentions falls back to something that makes every constraint derived from it
+   * vacuous, so the check the generic exists for silently disappears.
+   */
+  componentTypeParams: Record<string, { total: number; required: number }>;
   /** First spec location that referenced each loader/action, used to give contract
    * diagnostics (arity, non-async) a real position instead of the document root. */
   loaderOrigins: Record<string, SpecPath>;
@@ -119,6 +130,7 @@ export function resolveApp(
   const loaderArity: Record<string, number> = {};
   const formActions = new Set<string>();
   const actionArity: Record<string, number> = {};
+  const componentTypeParams: Record<string, { total: number; required: number }> = {};
   const loaderOrigins: Record<string, SpecPath> = {};
   const actionOrigins: Record<string, SpecPath> = {};
   const computeOrigins: Record<string, SpecPath> = {};
@@ -308,6 +320,7 @@ export function resolveApp(
           loaderArity,
           formActions: sorted(formActions),
           actionArity,
+          componentTypeParams,
           loaderOrigins,
           actionOrigins,
         },
@@ -347,6 +360,24 @@ export function resolveApp(
       (section.fields ?? []).forEach((field, f) => {
         const fieldAt = [...at, componentKey(section.component), "fields", f];
         resolveComponent(field.component, fieldAt);
+        // A field is emitted with one explicit type argument — the type of the input key
+        // it edits — so that a generic field component keeps the check its type parameter
+        // exists for. A component wanting two type arguments has one nova cannot supply,
+        // and an unsupplied parameter is an unchecked one, so it is reported rather than
+        // emitted without.
+        const tp = componentTypeParams[componentKey(field.component)];
+        if (tp !== undefined && tp.required > 1) {
+          out.push(
+            diagnostic(
+              "NOVA2012",
+              `field component '${field.component.name}' needs ${tp.required} type arguments; nova supplies one`,
+              ctx.positions.at(fieldAt),
+              {
+                hint: "a generic field component is generic in the value it carries — give the other parameters defaults, or wrap it in a non-generic component",
+              },
+            ),
+          );
+        }
         resolveBindings(field.props, fieldAt, page, routeParams, filterNames);
       });
 
@@ -375,6 +406,7 @@ export function resolveApp(
           }),
         );
       } else {
+        componentTypeParams[name] = entry.typeParams;
         addComponent(name, specifierFromOutDir(entry.module, entry.file), ctx.positions.at(at));
       }
       return;
@@ -394,7 +426,8 @@ export function resolveApp(
     const qualifying = (localHandle ? moduleExports(localHandle.program, resolvedFile) : []).filter(
       (e) => e.callable && isComponentName(e.name),
     );
-    if (!qualifying.some((e) => e.name === name)) {
+    const match = qualifying.find((e) => e.name === name);
+    if (match === undefined) {
       const s = suggest(name, qualifying.map((e) => e.name));
       out.push(
         diagnostic(
@@ -406,6 +439,7 @@ export function resolveApp(
       );
       return;
     }
+    componentTypeParams[componentKey(component)] = match.typeParams;
     addComponent(name, specifierFromOutDir(module, resolvedFile), ctx.positions.at(at));
   }
 
@@ -436,6 +470,10 @@ export function resolveApp(
           report("NOVA2003", `actions.ts has no export '${ref.name}'`, propAt, actionExports, ref.name);
         } else {
           actions.add(ref.name);
+          // Recorded for every action, not only a form's: `useAction<XInput>` is what
+          // makes a prop-bound action's payload a checked value, and a zero-parameter
+          // action has no element in its `Parameters<...>` tuple to name.
+          actionArity[ref.name] ??= actionExports.get(ref.name)!.paramCount;
           if (actionOrigins[ref.name] === undefined) actionOrigins[ref.name] = [...at, propName];
         }
       } else if (ref.kind === "compute") {

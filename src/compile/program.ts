@@ -9,6 +9,17 @@ export type ExportInfo = {
   col: number;
   /** Parameter count of the first call signature, or 0 when the export isn't callable. */
   paramCount: number;
+  /**
+   * Type parameters of the first call signature: how many there are, and how many carry
+   * no default (so must be written if a type argument list is written at all).
+   *
+   * Read for one reason: a generic component invoked with no type argument resolves its
+   * parameter by inference, and a parameter no supplied prop mentions falls back to
+   * something that makes every constraint derived from it vacuous — a picker declaring
+   * `key: BooleanKeys<T>` accepts any string at all. `total > 0` is what tells the
+   * emitter to write the type argument it knows (see emitField).
+   */
+  typeParams: { total: number; required: number };
 };
 
 /**
@@ -143,6 +154,7 @@ export function moduleExports(program: ts.Program, file: string): ExportInfo[] {
     const { line, character } = decl.getLineAndCharacterOfPosition(declaration.getStart());
     const type = checker.getTypeOfSymbolAtLocation(symbol, declaration);
     const callSignatures = checker.getSignaturesOfType(type, ts.SignatureKind.Call);
+    const typeParams = callSignatures[0]?.declaration?.typeParameters;
     out.push({
       name: symbol.getName(),
       callable: callSignatures.length > 0,
@@ -150,6 +162,12 @@ export function moduleExports(program: ts.Program, file: string): ExportInfo[] {
       line: line + 1,
       col: character + 1,
       paramCount: callSignatures[0]?.parameters.length ?? 0,
+      typeParams: {
+        total: typeParams?.length ?? 0,
+        required:
+          typeParams?.filter((p) => !ts.isTypeParameterDeclaration(p) || p.default === undefined)
+            .length ?? 0,
+      },
     });
   }
   return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));

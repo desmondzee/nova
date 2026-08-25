@@ -250,23 +250,49 @@ export function ChoiceField<T extends string>(props: {
 ```
 
 Nova emits the same unannotated lambda it always did — `(value) => form.set("vehicle", value)`
-— and TypeScript infers `T` from the props around it. This supersedes the earlier rule
-that a catalog component's props type must be non-generic; a generic *value* type is the
-mechanism that keeps the binding checked, so forbidding it only forced hosts to widen the
-action's own input to `string` and narrow inside it, losing exactly the guarantee this
-project exists to provide.
+— and **writes the type argument itself**:
 
-Nothing is cast, so nothing is silenced. What it still catches:
+```tsx
+<ChoiceField<SaveTripInput["vehicle"]> value={…} onChange={(value) => …} … />
+```
+
+This supersedes the earlier rule that a catalog component's props type must be
+non-generic; a generic *value* type is the mechanism that keeps the binding checked, so
+forbidding it only forced hosts to widen the action's own input to `string` and narrow
+inside it, losing exactly the guarantee this project exists to provide. But leaving the
+type parameter to inference was not enough on its own: a parameter that none of the props
+nova supplies mentions is inferred from nothing, resolves to its constraint, and every
+type derived from it — `BooleanKeys<T>`, `Record<T, string>` — quietly stops constraining
+anything. Writing the one type nova does know closes that.
+
+The rule it fixes, and the one thing to know when writing a field component: **a generic
+field component is generic in the value it carries.** Its first type parameter is the
+type of the key it edits; a component generic in something else — the whole record, a set
+of keys — will be handed a type argument it cannot accept, which is a `NOVA3001` at that
+field's line. A component wanting *two* type arguments is `NOVA2012`, because nova has
+one to give and a parameter left to inference is a parameter whose constraints may not
+apply. Give the extras defaults, or wrap the component.
+
+Nothing is cast, so nothing is silenced. What it catches:
 
 | Spec | Diagnostic |
 | --- | --- |
-| an option outside the union (`{ value: lorry }`) | `NOVA3001` at the field's line: `'"car" \| "van" \| "lorry"' is not assignable to '"car" \| "van"'` |
+| an option outside the union (`{ value: lorry }`) | `NOVA3001` at the field's line: `'"lorry"' is not assignable to '"car" \| "van"'` |
 | a plain `string` picker on the union key | `NOVA3001` at the field's line: `'string' is not assignable to '"car" \| "van"'` |
+| a generic field whose parameter is not the value type | `NOVA3001` at the field's line — the type argument does not satisfy its constraint |
+| a generic field wanting two type arguments | `NOVA2012` at the field's line |
 | a `NumberField` on a `string` key | unchanged — the component's own `onChange` still decides |
 | a `name:` the action does not accept | unchanged |
 
 The constraint (`T extends string` above) is what keeps the literal types from widening
 during inference, so declare one rather than a bare `<T>`.
+
+A **section** component may be generic too, and there nova has no type argument to give —
+its parameter is resolved by ordinary inference from the props the spec binds. That works
+and is worth using where the parameter is reachable from a bound prop (`rows: data#trips`
+fixing a table's row type); it does *not* work where the parameter appears only in a
+mapped or conditional prop type, and there the constraint is vacuous with nothing to say
+so. See [limitations](#limitations).
 
 Nova supplies `onSubmit`, `busy` and `error` to the form component and `value`, `onChange`
 and `error` to each field, so a catalog's field components must accept those — the exact
@@ -289,6 +315,30 @@ It is consumed by nova rather than forwarded, so a delete button needs no `confi
 of its own. A page hoists one `useAction` per action, so two sections asking for different
 text on the same action is `NOVA1010`; a `confirm:` with no action to guard, or with more
 than one, is `NOVA1007`.
+
+**An `actions#` binding on an ordinary prop is checked against the action's own input
+type.** It reaches the component as `deleteTripAction.run`, and the page hoists that as
+`useAction<DeleteTripInput>(…)`, so `run` is `(input: DeleteTripInput) => Promise<boolean>`
+— accepted only by a prop whose callback hands it something the action takes:
+
+```yaml
+- ActivityList: { rows: data#trips, onDelete: actions#deleteTrip }
+```
+
+```tsx
+// onDelete's parameter is what decides. `Trip` must be assignable to DeleteTripInput.
+export function ActivityList(props: {
+  rows: readonly Trip[];
+  onDelete: (row: Trip) => Promise<boolean>;
+}): React.ReactElement { … }
+```
+
+A component shared by several actions declares the payload it carries and is generic in
+it — `payload: T; onDelete: (input: T) => Promise<boolean>` — so the action and the data
+the component was given have to agree. A mismatch is `NOVA3001` at the section's own
+line. Before, `run` was `(input: unknown) => Promise<boolean>`, and an `unknown`
+parameter is assignable to *every* callback shape there is, so nothing about the payload
+of an action outside a form was ever checked.
 
 `filters.month.set` is a filter reference in write mode. It emits
 `(value: string) => filters.set("month", value)`, which updates the query string and the
@@ -390,7 +440,13 @@ Codes are stable.
   module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, a
   filter/route parameter reference that doesn't match its page, or one name
   bound to two different things (`NOVA2009` — two components, or a loader and
-  an action sharing a name).
+  an action sharing a name). `NOVA2012` is a field component asking for more
+  than one type argument — the next free number in the block, and in this
+  block because it is answered by reading the catalog export's own type
+  parameters, before anything is emitted. Nova has exactly one type argument
+  for a field (the type of the input key it edits) and a parameter left to
+  inference is a parameter whose constraints may silently stop applying, so
+  it is reported rather than emitted half-instantiated.
 - `NOVA3xxx` — a problem TypeScript found in the emitted output. `NOVA3001` is
   remapped back to the YAML line that produced it; `NOVA3002` is reported at
   the generated location instead, because it has no traceable spec origin —
@@ -400,6 +456,52 @@ Codes are stable.
   your spec.
 
 ## Breaking changes
+
+### Since 0.1.0 — two type holes closed
+
+Both change what the emitted output *asks of a host catalog*, so both can turn a build
+that passed into one that reports. Neither touches any YAML: no spec changes.
+
+- **An `actions#` binding on an ordinary prop is now checked against the action's input
+  type.** `useAction` is generic (`useAction<Input>`) and its `run` is
+  `(input: Input) => Promise<boolean>` rather than `(input: unknown) => …`. **What a host
+  must do:** every component prop an `actions#` binding is bound to has to declare a
+  callback the action can be handed. A prop declared `(input: unknown) => Promise<boolean>`
+  — which is what an unchecked binding invited — now fails, because `unknown` is not
+  assignable to the action's input. Replace it with the action's real input type, or, for
+  a catalog component several apps share, make the component generic in the payload it
+  already carries:
+
+  ```diff
+  -export type DestructiveActionProps = {
+  -  send: unknown;
+  -  onSubmit: (input: unknown) => Promise<boolean>;
+  -};
+  -export function DestructiveAction(props: DestructiveActionProps) { … }
+  +export type DestructiveActionProps<T> = {
+  +  send: T;
+  +  onSubmit: (input: T) => Promise<boolean>;
+  +};
+  +export function DestructiveAction<T>(props: DestructiveActionProps<T>) { … }
+  ```
+
+  `T` is then inferred from the payload prop the spec already binds (usually from a
+  loader), and the action bound beside it has to accept it. The reference consumer needed
+  this in six places in one catalog; its other app, which binds no action outside a form,
+  needed nothing.
+
+- **A generic field component is now invoked with an explicit type argument** — the type
+  of the action-input key it edits. **What a host must do:** a field component's first
+  type parameter must be the type of the value it carries, and it must not need a second
+  (`NOVA2012`). A field generic in something else — the record, a set of keys — has to
+  grow a default for that parameter or move behind a non-generic wrapper. A field generic
+  in its value type (`ChoiceField<T extends string>`) needs no change.
+
+Recommended version for these: **0.2.0**. Note that the input stamp in each emitted
+file's header covers the compiler *version*, not its build, so a host that skips
+recompilation on an unchanged stamp should force one rebuild across the upgrade.
+
+### In 0.1.0
 
 Two, both from giving `title:` and `default:` somewhere real to go. Neither affects a
 host that only mounts `pages` and writes literal filter defaults — the reference
@@ -415,9 +517,11 @@ consumer needed no edit to its spec, its catalog or its build.
   `{ kind: "binding", ref: { kind: "compute", name: "currentMonth" } }`. Nothing in the
   YAML changed.
 
-Also relaxed, which breaks nothing: a catalog component's props type **may** now be
-generic. The old rule said it must not be, and that rule was what made a union-typed
-action input unbindable.
+Also relaxed, which breaks nothing: a catalog component's props type **may** be generic.
+The old rule said it must not be, and that rule was what made a union-typed action input
+unbindable. For a *field* the relaxation now comes with the narrower rule above — generic
+in the value it carries, one type parameter — because the unrestricted version let a
+field lose its check silently.
 
 ## Limitations
 
@@ -493,6 +597,23 @@ Those belong in a loader.
 **Loading and error states are page-level, not per binding.** One slow
 loader blanks the whole page, and one failing loader replaces it with the
 error component. Per-binding states are not expressible.
+
+**A generic *section* component's type parameter is left to inference.** Nova writes a
+type argument for a field, because it knows the one type a field is about; a section has
+no such type, so a generic section component resolves its parameter from the props the
+spec binds. Where the parameter is reachable from one — `rows: data#trips` fixing a
+table's row type — that is exactly right, and the derived props (`columns: (keyof Row &
+string)[]`) are checked. Where it appears only inside a mapped or conditional prop type —
+`toggles: Array<{ key: BooleanKeys<T> }>` — nothing infers it, it resolves to its
+constraint, and `BooleanKeys<T>` then accepts any string at all with no diagnostic to say
+so. Bind such a component behind a non-generic local component, which fixes the type
+argument in your own code.
+
+**An action bound to a callback that takes more arguments than the action's input is not
+rejected.** `run` takes one parameter, and a one-parameter function is assignable to a
+callback type with two, so `onPick: (id: string, index: number) => void` accepts an
+action whose input is a `string`. The first argument is checked; the rest are ignored,
+exactly as in ordinary JavaScript.
 
 **The handler-to-loader boundary is not typechecked.** `handlers.ts` hands
 URL search params (and, for an action, the parsed JSON body) to your function

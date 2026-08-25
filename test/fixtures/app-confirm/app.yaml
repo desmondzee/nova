@@ -3,5 +3,6 @@ pages:
     sections:
       - ActionButton:
           label: Delete
+          payload: { id: t1 }
           onSubmit: actions#deleteTrip
           confirm: Delete this trip?

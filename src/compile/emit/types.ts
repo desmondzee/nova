@@ -53,11 +53,10 @@ export function emitTypes(app: ResolvedApp, config: NovaConfig): EmittedFile {
   }
   for (const name of app.actions) {
     e.line(`export type ${cap(name)} = typeof actions.${name};`);
-    // Only a form needs the action's *input* type: `useForm<XInput>` is what makes each
-    // field's `name` a checked key of it. An action bound to a plain prop reaches the
-    // component as `.run` and never indexes into its input, so emitting an `Input` alias
-    // for one would be a line in every app that no emitted file imports.
-    if (!app.formActions.includes(name)) continue;
+    // Every action needs its *input* type, not only a form's. `useForm<XInput>` is what
+    // makes each field's `name` a checked key of it, and `useAction<XInput>` is what
+    // makes a prop-bound action's payload checked at all: `run` used to take `unknown`,
+    // which every callback shape a component could declare accepted silently.
     e.line(
       app.actionArity[name] === 0
         ? `export type ${cap(name)}Input = Record<string, never>;`

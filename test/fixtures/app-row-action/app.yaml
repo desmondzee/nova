@@ -1,0 +1,6 @@
+pages:
+  "/":
+    sections:
+      - RowActions:
+          rows: data#trips
+          onDelete: actions#deleteTrip

@@ -2,7 +2,14 @@ import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
 import type { NovaConfig } from "./config.js";
 import { createProgram, moduleExports, resolveModule, type ProgramSession } from "./program.js";
 
-export type CatalogEntry = { name: string; module: string; file: string };
+export type CatalogEntry = {
+  name: string;
+  module: string;
+  file: string;
+  /** The export's type parameters, carried through so the emitter can decide whether it
+   * has a type argument to write. See ExportInfo.typeParams. */
+  typeParams: { total: number; required: number };
+};
 
 export type Catalog = {
   get(name: string): CatalogEntry | undefined;
@@ -60,7 +67,12 @@ export function readCatalogs(
           );
           continue;
         }
-        entries.set(exported.name, { name: exported.name, module, file });
+        entries.set(exported.name, {
+          name: exported.name,
+          module,
+          file,
+          typeParams: exported.typeParams,
+        });
       }
     }
   } else {

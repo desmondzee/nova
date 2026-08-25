@@ -16,4 +16,5 @@ pages:
                 format: compute#formatKm
             - ActionButton:
                 label: Save
+                payload: { date: "2026-08-01", km: 12 }
                 onSubmit: actions#saveTrip
