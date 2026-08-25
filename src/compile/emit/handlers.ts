@@ -67,32 +67,30 @@ export function emitHandlers(app: ResolvedApp, config: NovaConfig): EmittedFile 
     if (app.actions.length > 0) e.lines(PARSE_BODY);
     e.line();
   }
+  // One line per endpoint, so the map reads as the table of routes it is. Each entry
+  // used to be a block body around a single `return`, with the search params unpacked
+  // into two locals that were each read once — five lines to say "call this loader with
+  // the query string", times every loader in every app.
   e.line(`export const handlers: ${HANDLERS_TYPE} = {`);
   e.indent();
   for (const name of app.loaders) {
-    e.line(`"GET /_data/${name}": async (req: Request): Promise<Response> => {`);
-    e.indent();
     // A loader declared with no parameters is called with no argument — data.ts is
     // real TypeScript, and calling it with an argument it doesn't accept is a genuine
     // arity error that would otherwise surface as an unmapped "likely a nova bug"
-    // diagnostic against the author's perfectly ordinary zero-input loader.
-    if (app.loaderArity[name] === 0) {
-      e.line("void req;");
-      e.line(`return respond(() => data.${name}());`);
-    } else {
-      e.line("const url = new URL(req.url);");
-      e.line("const input = Object.fromEntries(url.searchParams.entries());");
-      e.line(`return respond(() => data.${name}(input as never));`);
-    }
-    e.dedent();
-    e.line("},");
+    // diagnostic against the author's perfectly ordinary zero-input loader. It takes no
+    // `req` either, and a handler that names one it cannot use needs a `void req;` to
+    // get past `noUnusedParameters`; leaving the parameter out says the same thing and
+    // is still assignable to the map's type.
+    e.line(
+      app.loaderArity[name] === 0
+        ? `"GET /_data/${name}": async (): Promise<Response> => respond(() => data.${name}()),`
+        : `"GET /_data/${name}": async (req: Request): Promise<Response> => respond(() => data.${name}(Object.fromEntries(new URL(req.url).searchParams.entries()) as never)),`,
+    );
   }
   for (const name of app.actions) {
-    e.line(`"POST /_actions/${name}": async (req: Request): Promise<Response> => {`);
-    e.indent();
-    e.line(`return respond(async () => actions.${name}((await body(req)) as never));`);
-    e.dedent();
-    e.line("},");
+    e.line(
+      `"POST /_actions/${name}": async (req: Request): Promise<Response> => respond(async () => actions.${name}((await body(req)) as never)),`,
+    );
   }
   e.dedent();
   e.line("};");
