@@ -379,28 +379,49 @@ text on the same action is `NOVA1010`; a `confirm:` with no action to guard, or 
 than one, is `NOVA1007`.
 
 **An `actions#` binding on an ordinary prop is checked against the action's own input
-type.** It reaches the component as `deleteTripAction.run`, and the page hoists that as
-`useAction<DeleteTripInput>(…)`, so `run` is `(input: DeleteTripInput) => Promise<boolean>`
-— accepted only by a prop whose callback hands it something the action takes:
+type, and resolves the action's own result.** It reaches the component as
+`deleteTripAction.run`, and the page hoists that as
+`useAction<DeleteTripInput, Awaited<ReturnType<DeleteTrip>>>(…)`, so `run` is
+`(input: DeleteTripInput) => Promise<DeleteTripResult | null>`:
 
 ```yaml
 - ActivityList: { rows: data#trips, onDelete: actions#deleteTrip }
 ```
 
 ```tsx
-// onDelete's parameter is what decides. `Trip` must be assignable to DeleteTripInput.
+// onDelete's parameter is what decides whether the action may be bound at all: `Trip`
+// must be assignable to DeleteTripInput. Its return type is what the component may read.
 export function ActivityList(props: {
   rows: readonly Trip[];
-  onDelete: (row: Trip) => Promise<boolean>;
+  onDelete: (row: Trip) => Promise<{ ok: boolean; warning?: string } | null>;
 }): React.ReactElement { … }
 ```
 
 A component shared by several actions declares the payload it carries and is generic in
-it — `payload: T; onDelete: (input: T) => Promise<boolean>` — so the action and the data
-the component was given have to agree. A mismatch is `NOVA3001` at the section's own
-line. Before, `run` was `(input: unknown) => Promise<boolean>`, and an `unknown`
-parameter is assignable to *every* callback shape there is, so nothing about the payload
-of an action outside a form was ever checked.
+it — `payload: T; onDelete: (input: T) => Promise<R>` — so the action and the data the
+component was given have to agree. A mismatch is `NOVA3001` at the section's own line.
+Before, `run` was `(input: unknown) => Promise<boolean>`, and an `unknown` parameter is
+assignable to *every* callback shape there is, so nothing about the payload of an action
+outside a form was ever checked.
+
+**`null` is the action having given no answer** — the `confirm:` was declined, or the
+request failed — and the message for that case is in `error` on the same hook. Everything
+else is the action's own return value, parsed from the response body, so an action
+declaring three outcomes hands the component three outcomes:
+
+```ts
+// actions.ts — the upstream accepted the claim but had something to say about it.
+export async function submitMonth(input: { month: string }): Promise<
+  { ok: true; warning?: string } | { ok: false; fieldErrors: Record<string, string> }
+> { … }
+```
+
+A boolean `run` could not carry that middle case, and two converted production apps
+answered it by showing a **failure for a submission that had persisted**, with the list
+un-refreshed behind it. Note that the value crosses HTTP: it is the JSON of what your
+action returned, so a `Date` in the result arrives as a string, and a result carrying no
+`ok` key at all is treated as not-ok (no `refreshes:` runs, and `fieldErrors` is read from
+it if present).
 
 `filters.month.set` is a filter reference in write mode. It emits
 `(value: string) => filters.set("month", value)`, which updates the query string and the
@@ -432,6 +453,20 @@ the `sortable:` line — checked against the type, so a catalog is free to call 
 prop `cols`, `headers` or anything else. `NOVA1009` is the same question answered from
 the spec's own text alone, before any type is read, and applies where the section names a
 literal `columns:` list.
+
+**A literal `columns:` or `numeric:` list is checked the same way.** They are ordinary
+props — nova forwards them and your component decides what they mean — but they are the
+two names a column list is written under, and a name in one of them that is not a key of
+the row type is the same `NOVA3001`, at that key's own line. Until 0.2.0 neither was
+checked at all: `columns: [dayz]` compiled clean and rendered a column of en dashes under
+a `DAYZ` header, and a misspelled `numeric:` silently did nothing. A catalog spelling its
+column list something else gets no check, exactly as before.
+
+The row type is taken from the one value the section reads from a loader, **including the
+path into it**: `rows: data#travel.days` is checked against the element type of
+`Travel["days"]`, not of `Travel`. A section reading two different loader values is not
+checked — there is no single row type the columns belong to, and nova will not pick — and
+neither is one whose data is not a list of objects.
 
 ### Sorting what the browser does not hold
 
@@ -560,6 +595,34 @@ page-level gate — `if (error) return <ErrorNotice>` above every section — un
 loader out of five failing replaced the navigation, the header, the stats, every section
 and both forms with a single line.
 
+**One loader's failure is stated once.** The section is the unit that degrades; it is not
+the unit a failure is *reported* in. The first section that binds a loader renders the
+notice, and a later section whose data failed for the same reason renders nothing — it
+has no data, and the reason is already on the screen above it:
+
+```tsx
+{travel.error !== null ? <ErrorNotice>{travel.error}</ErrorNotice>
+  : travel.value === null ? <Loading /> : <StatGrid stats={travel.value} />}
+{travel.error !== null ? null                                 {/* said once, above */}
+  : travel.value === null ? <Loading /> : <DayTable rows={travel.value.days} />}
+```
+
+A detail page hangs five sections off one loader, so a stale link used to print the same
+sentence four times over; a report page printed six. The **loading** state is deliberately
+not deduplicated: a spinner marks where a section will be, and four of them in four places
+is what a page still arriving looks like, whereas four copies of one sentence is one fact
+asserted four times.
+
+**A section that holds controls should not bind the data those controls filter.** If the
+card carrying your date pickers also binds the report they scope, a bad date range takes
+the card with it and the reader has no way left to correct the range. That is a spec
+shape, not a nova limitation, and the fix is one line of YAML: put the controls in their
+own section, which binds no loader and is therefore never gated at all (see the `TabNav`
+above). Nova could instead grow a way to mark a binding as survivable, but it would buy
+nothing — a section rendered without its data hands its component `null`, so the component
+has to declare `T | null` and decide what to draw either way, which is the same edit to
+the same file as splitting the section, plus a new spec key to learn.
+
 `.value` is still narrowed: the conditional is written one loader at a time so that
 `trips.value` is non-null in the branch that reads it. Nothing is asserted or cast, so a
 prop bound to the wrong type is still a `NOVA3001` at the spec line that bound it.
@@ -587,7 +650,11 @@ the loading state — so this throw is how "not found" is said.
 **A malformed request body is a 400.** `await req.json()` rejects on a body that is not
 JSON; that is the caller's mistake, and the generated action handler answers
 `400 {"ok":false,"error":"invalid JSON body"}` rather than letting it surface as a server
-error.
+error. So is a body that parses but is not an object — `null`, `12`, `"trip"`, `true`.
+`JSON.parse("null")` succeeds, and `null` then met an action expecting an object and threw
+on its first property access, which a host answers as a 500. An action's declared input is
+an object type; that is exactly what the `as never` at the handler boundary asserts, and
+this is the one part of it that is checked.
 
 ## Loader inputs
 
@@ -689,6 +756,50 @@ Codes are stable.
   your spec.
 
 ## Breaking changes
+
+### Since 0.1.0 — four defects three converted production apps found
+
+An equivalence audit converted three production apps and compared each against the
+original it replaces. One of these four was the single blocker keeping a conversion from
+replacing its original; two more can turn a build that passed into one that reports.
+
+- **`run` resolves the action's own result, not `boolean`.** `useAction` is
+  `useAction<Input, Result>` and its `run` is `(input: Input) => Promise<Result | null>`.
+  **What a host must do:** every component prop an `actions#` binding is bound to has to
+  declare a callback returning what the action returns (or `Promise<R>`, generic, or
+  `void` if it ignores the answer). A prop declared `(input: X) => Promise<boolean>` now
+  fails. This is the fix for a submission the upstream **accepted with a warning** being
+  shown to the user as an outright failure, with the row already written and the list not
+  refreshed — which two of the three conversions did:
+
+  ```diff
+  -export function ActionButton<T>(props: {
+  -  payload: T;
+  -  onSubmit: (input: T) => Promise<boolean>;
+  -}) { … }
+  +export function ActionButton<T, R>(props: {
+  +  payload: T;
+  +  onSubmit: (input: T) => Promise<R>;
+  +}) { … }
+  ```
+
+  `useForm` is unchanged where a host meets it: `submit()` is still `() => Promise<boolean>`
+  and a form shell still declares `onSubmit: () => Promise<boolean>`. It reads its verdict
+  off the action's own `ok` now; the per-field errors were always cleared by `useAction`'s
+  own state, and still are.
+- **A literal `columns:` or `numeric:` list is checked against the row type** — see
+  [sorting](#confirmation-filter-writes-and-sorting). **What a host must do:** expect a
+  `NOVA3001` at that line where a name is not a key of the row type. All three mileage
+  conversions had at least one such list and none of them was checked before. The row type
+  now follows the binding's path (`data#travel.days`), which also makes an existing
+  `sortable:` check on such a section real rather than vacuous.
+- **One failed loader renders one error notice**, not one per section that binds it — see
+  [failing well](#failing-well). Behaviour only; no spec or catalog change. A host that
+  counted the notices on a failed page will count fewer.
+- **A JSON body that parses to a non-object is a 400.** `null`, `12`, `"trip"` and `true`
+  answered 500; both original apps answer 400. Behaviour only.
+
+Recommended version for these: **0.2.0**, alongside the three sets below.
 
 ### Since 0.1.0 — what two foreign consumers found
 

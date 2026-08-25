@@ -8,6 +8,23 @@ export function Table(props: {
   return <table data-columns={props.columns.join(",")}>{props.rows.length}</table>;
 }
 
+/**
+ * A table whose column names are strings as far as its own type is concerned — the
+ * ordinary catalog shape, and the one that let `columns: [dayz]` render a column of en
+ * dashes. What the names have to be keys of is the row type, which only nova knows.
+ */
+export function Breakdown(props: {
+  rows: ReadonlyArray<Record<string, unknown>>;
+  columns: string[];
+  numeric?: string[];
+}): React.ReactElement {
+  return (
+    <table data-columns={props.columns.join(",")} data-numeric={(props.numeric ?? []).join(",")}>
+      {props.rows.length}
+    </table>
+  );
+}
+
 export function StatCard(props: { label: string; value: string }): React.ReactElement {
   return <div>{props.label}: {props.value}</div>;
 }

@@ -1,0 +1,12 @@
+pages:
+  "/travel/:id":
+    title: Travel
+    sections:
+      - StatCard: { label: Heading, value: "Travel" }
+      - StatCard: { label: Total, value: data#travel.total }
+      - StatCard: { label: Where, value: data#travel.place }
+      - Breakdown:
+          rows: data#travel.days
+          columns: [day, hours]
+          numeric: [hours]
+      - StatCard: { label: Note, value: data#travel.note }

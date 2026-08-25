@@ -178,6 +178,8 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
 /** The page components themselves: the `"use client"` half of the emitted pair. */
 export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
   const e = new Emitter();
+  /** Loaders whose failure this page has already stated once. Reset per page; see gate. */
+  let announced = new Set<string>();
   const byModule = new Map<string, string[]>();
   for (const c of app.components) {
     byModule.set(c.module, [...(byModule.get(c.module) ?? []), c.name]);
@@ -206,8 +208,14 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
       app.loaderArity[name] === 0 ? cap(name) : `${cap(name)}, ${cap(name)}Input`;
     e.line(`import type { ${names} } from "${rel(config, "./types")}";`);
   }
+  // An action bound to an ordinary prop also needs its own *type* — `useAction`'s second
+  // argument is `Awaited<ReturnType<…>>`, which is what carries the action's answer out
+  // to the component. A form's action needs only its input, and importing a type it never
+  // names would fail a host with `noUnusedLocals`.
+  const propActions = new Set(app.spec.pages.flatMap((p) => collect(p.sections, "actions")));
   for (const name of app.actions) {
-    e.line(`import type { ${cap(name)}Input } from "${rel(config, "./types")}";`);
+    const names = propActions.has(name) ? `${cap(name)}, ${cap(name)}Input` : `${cap(name)}Input`;
+    e.line(`import type { ${names} } from "${rel(config, "./types")}";`);
   }
   e.line();
 
@@ -330,15 +338,22 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
       );
     }
     const options = optionsByAction(page.sections);
-    // The type argument is what makes an action bound to an ordinary prop checked.
+    // Both type arguments are what make an action bound to an ordinary prop checked.
     // `run` was declared `(input: unknown) => Promise<boolean>`, and an `unknown`
     // parameter is assignable to every callback shape there is — so `onDelete={
     // deleteTripAction.run}` type-checked against `(row: Trip) => void` whatever the
     // action actually accepted. With the action's own input type it is the ordinary
     // contravariant check, reported at the spec line that bound it.
+    //
+    // The second is the action's own result. A boolean `run` could say only that a
+    // submission succeeded or did not, so an upstream that accepted the claim *and*
+    // reported something recoverable was presented to the reader as a failure — with the
+    // claim persisted and the list un-refreshed behind it. `Awaited<ReturnType<…>>`
+    // rather than an emitted `XxxResult` alias: one type per action in every app's
+    // types.ts, unread by the forms half, is dead weight in the common case.
     for (const name of usedActions) {
       e.line(
-        `const ${name}Action = useAction<${cap(name)}Input>("${urlFor(config, "_actions", name)}"${optsArg(options.get(name))});`,
+        `const ${name}Action = useAction<${cap(name)}Input, Awaited<ReturnType<${cap(name)}>>>("${urlFor(config, "_actions", name)}"${optsArg(options.get(name))});`,
         app.actionOrigins[name],
       );
     }
@@ -379,6 +394,9 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     e.line("return (");
     e.indent().line(open, path);
     e.indent();
+    // One page, one notice per failed loader — see `gate`. Reset here because the set is
+    // about a page's own screen, and filled in emission order, which is document order.
+    announced = new Set<string>();
     page.sections.forEach((section, i) => {
       emitSection(section, [...path, "sections", i]);
     });
@@ -410,15 +428,28 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
    * page-level check narrowed them before. The narrowing is what keeps a component prop
    * from receiving `null` and a wrong-typed binding a compile error at the spec line;
    * nothing here casts.
+   *
+   * **One loader's failure is stated once.** The section is the unit that *degrades*; it
+   * is not the unit a failure is reported in. A detail page hangs five sections off one
+   * loader and printed the same sentence four times; a report page printed six. The first
+   * section (in document order) that binds a loader renders its notice, and every later
+   * section binding the same failed loader renders nothing at all — it has no data, and
+   * the reason has already been given above it. The loading state is deliberately *not*
+   * deduplicated: a spinner marks where a section will be, and four of them is what a
+   * page still arriving looks like, whereas four copies of one sentence is one fact
+   * asserted four times.
    */
   function gate(section: SectionSpec): { open: string; close: string } {
     const loaders = ownLoaders(section);
     if (loaders.length === 0) return { open: "", close: "" };
     const failed = loaders
-      .map(
-        (n) =>
-          `${n}.error !== null ? <${config.states.error}>{${n}.error}</${config.states.error}> : `,
-      )
+      .map((n) => {
+        const notice = announced.has(n)
+          ? "null"
+          : `<${config.states.error}>{${n}.error}</${config.states.error}>`;
+        announced.add(n);
+        return `${n}.error !== null ? ${notice} : `;
+      })
       .join("");
     const waiting = loaders.map((n) => `${n}.value === null`).join(" || ");
     return { open: `{${failed}${waiting} ? <${config.states.loading} /> : `, close: "}" };

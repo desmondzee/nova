@@ -56,6 +56,7 @@ describe("moduleExports", () => {
     const p = createProgram({ tsconfigPath: TSCONFIG, roots: [CATALOG] })!;
     const names = moduleExports(p.program, CATALOG).map((e) => e.name);
     expect(names).toEqual([
+      "Breakdown",
       "EmptyState",
       "ErrorNotice",
       "Loading",

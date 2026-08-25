@@ -40,10 +40,20 @@ const PRELUDE = [
 const PARSE_BODY = [
   "",
   "/** The request's JSON body. A body that is not JSON is the caller's 400, not a 500. */",
-  "const body = (req: Request): Promise<unknown> =>",
-  "  req.json().catch(() => {",
-  "    throw Object.assign(new Error('invalid JSON body'), { status: 400 });",
+  "const invalidBody = () =>",
+  "  Object.assign(new Error('invalid JSON body'), { status: 400 });",
+  "",
+  "const body = async (req: Request): Promise<unknown> => {",
+  "  const value: unknown = await req.json().catch(() => {",
+  "    throw invalidBody();",
   "  });",
+  "  // `JSON.parse('null')` succeeds, and so does `12`, `\"x\"` and `true` — all of them",
+  "  // then met an action expecting an object and threw on its first property access,",
+  "  // which the host answered as a 500. An action's declared input is an object type;",
+  "  // that is exactly what the `as never` below asserts and nothing else checked.",
+  "  if (typeof value !== 'object' || value === null) throw invalidBody();",
+  "  return value;",
+  "};",
 ];
 
 export function emitHandlers(app: ResolvedApp, config: NovaConfig): EmittedFile {

@@ -294,6 +294,49 @@ describe("N5 — a sortable column is checked against the row type, not a prop n
   });
 });
 
+describe("N5b — a column list is checked against the row type too", () => {
+  // `sortable:` was checked against the row type and `columns:` was not, so
+  // `columns: [dayz]` compiled clean and rendered a column of en dashes. `numeric:` —
+  // the subset of those columns a table right-aligns — was not checked either, and a
+  // typo in it silently did nothing at all.
+  it("accepts a column list whose names are keys of the bound row type", async () => {
+    const appDir = app("app-detail");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics, show(result)).toEqual([]);
+  });
+
+  it("reports a columns entry the row type does not have, at the columns line", async () => {
+    const appDir = app("app-detail");
+    edit(appDir, "columns: [day, hours]", "columns: [dayz, hours]");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.ok, show(result)).toBe(false);
+    const bad = result.diagnostics.find((d) => d.message.includes("dayz"));
+    expect(bad, show(result)).toBeDefined();
+    expect(bad!.code).toBe("NOVA3001");
+    expect(bad!.file).toBe(join(appDir, "app.yaml"));
+    expect(bad!.line).toBe(10);
+    expect(result.diagnostics.filter((d) => d.code === "NOVA3002")).toEqual([]);
+  });
+
+  it("reports a numeric entry the row type does not have, at the numeric line", async () => {
+    const appDir = app("app-detail");
+    edit(appDir, "numeric: [hours]", "numeric: [hourz]");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.ok, show(result)).toBe(false);
+    const bad = result.diagnostics.find((d) => d.message.includes("hourz"));
+    expect(bad, show(result)).toBeDefined();
+    expect(bad!.code).toBe("NOVA3001");
+    expect(bad!.line).toBe(11);
+  });
+
+  it("claims nothing about a column list on a section whose rows are not an object list", async () => {
+    const appDir = app("app-sections");
+    edit(appDir, "columns: [date, km]", "columns: [date, km, anything]");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics.filter((d) => d.code.startsWith("NOVA3")), show(result)).toEqual([]);
+  });
+});
+
 describe("N6 — a filter named sort or dir collides with the page's sort state", () => {
   it("reports NOVA1014 for a filter named sort beside a sortable section", async () => {
     const appDir = app("app-sort");

@@ -80,13 +80,14 @@ describe("actions, compute bindings and nested children", () => {
     const result = await compileApp(appDir, withForms(appDir));
     const views = result.files.find((f) => f.name === "views.tsx")!.text;
     expect(views).toContain(
-      'const saveTripAction = useAction<SaveTripInput>("/_actions/saveTrip");',
+      'const saveTripAction = useAction<SaveTripInput, Awaited<ReturnType<SaveTrip>>>("/_actions/saveTrip");',
     );
     expect(views).toContain("onSubmit={saveTripAction.run}");
     // The action's own input type, imported for the purpose: an action bound to a plain
     // prop used to reach the component as a `(input: unknown) => …`, which every callback
-    // shape accepted.
-    expect(views).toContain('import type { SaveTripInput } from "./types";');
+    // shape accepted. Its own type comes with it, because `run` now resolves the action's
+    // own result rather than a boolean nova reduced it to.
+    expect(views).toContain('import type { SaveTrip, SaveTripInput } from "./types";');
     const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
     expect(handlers).toContain('"POST /_actions/saveTrip"');
     // The body is parsed through `body(req)` rather than a bare `await req.json()`,
@@ -327,7 +328,7 @@ describe("confirmation before a destructive action", () => {
     expect(result.ok).toBe(true);
     const views = result.files.find((f) => f.name === "views.tsx")!.text;
     expect(views).toContain(
-      'const deleteTripAction = useAction<DeleteTripInput>("/_actions/deleteTrip", { confirm: "Delete this trip?" });',
+      'const deleteTripAction = useAction<DeleteTripInput, Awaited<ReturnType<DeleteTrip>>>("/_actions/deleteTrip", { confirm: "Delete this trip?" });',
     );
     // Consumed by nova rather than forwarded — ActionButton declares no `confirm` prop.
     expect(views).not.toContain("confirm={");
@@ -338,7 +339,7 @@ describe("confirmation before a destructive action", () => {
     const result = await compileApp(appDir, withForms(appDir));
     const views = result.files.find((f) => f.name === "views.tsx")!.text;
     expect(views).toContain(
-      'const saveTripAction = useAction<SaveTripInput>("/_actions/saveTrip");',
+      'const saveTripAction = useAction<SaveTripInput, Awaited<ReturnType<SaveTrip>>>("/_actions/saveTrip");',
     );
   });
 });
@@ -699,7 +700,7 @@ describe("an action bound outside a form", () => {
     const views = result.files.find((f) => f.name === "views.tsx")!.text;
     // The action's own input type is the type argument, and that is the whole mechanism.
     expect(views).toContain(
-      'const deleteTripAction = useAction<DeleteTripInput>("/_actions/deleteTrip");',
+      'const deleteTripAction = useAction<DeleteTripInput, Awaited<ReturnType<DeleteTrip>>>("/_actions/deleteTrip");',
     );
     expect(views).toContain("onDelete={deleteTripAction.run}");
   });

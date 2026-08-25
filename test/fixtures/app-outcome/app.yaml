@@ -1,0 +1,6 @@
+pages:
+  "/":
+    filters:
+      month: { default: "2026-08" }
+    sections:
+      - SendButton: { label: Send, month: filters.month, onSend: actions#submitMonth }

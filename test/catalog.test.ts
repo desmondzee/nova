@@ -18,6 +18,7 @@ describe("readCatalogs", () => {
     const { catalog, diagnostics } = readCatalogs(config(["../catalog/ui"]), APP);
     expect(diagnostics).toEqual([]);
     expect(catalog.names()).toEqual([
+      "Breakdown",
       "EmptyState",
       "ErrorNotice",
       "Loading",

@@ -171,7 +171,7 @@ describe("loader and action URLs carry the host's mount prefix", () => {
     expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
     const views = fileOf(result.files, "views.tsx");
     expect(views).toContain('useLoader<Rows, RowsInput>("/api/apps/trips/_data/rows"');
-    expect(views).toContain('useAction<SaveTripInput>("/api/apps/trips/_actions/saveTrip")');
+    expect(views).toContain('useAction<SaveTripInput, Awaited<ReturnType<SaveTrip>>>("/api/apps/trips/_actions/saveTrip")');
     // Handler map keys are relative to whatever mounts the map, so they do not move.
     const handlers = fileOf(result.files, "handlers.ts");
     expect(handlers).toContain('"GET /_data/rows"');
@@ -184,7 +184,7 @@ describe("loader and action URLs carry the host's mount prefix", () => {
     const result = await compileApp(appDir, configFor(appDir));
     const views = fileOf(result.files, "views.tsx");
     expect(views).toContain('useLoader<Rows, RowsInput>("/_data/rows"');
-    expect(views).toContain('useAction<SaveTripInput>("/_actions/saveTrip")');
+    expect(views).toContain('useAction<SaveTripInput, Awaited<ReturnType<SaveTrip>>>("/_actions/saveTrip")');
   });
 
   it("changes the input stamp, because it changes the output", async () => {

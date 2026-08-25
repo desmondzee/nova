@@ -22,11 +22,15 @@ export function Panel(props: {
  * declared input type is what decides whether a `payload:` is acceptable — `onSubmit`
  * used to be declared `(input: unknown) => Promise<boolean>`, which every action there
  * is satisfied and nothing about the payload was ever checked.
+ *
+ * Generic in the *answer* too, for the same reason in the other direction: `Promise<
+ * boolean>` no longer describes what an action resolves, and a button that does not read
+ * the answer should not have to name it either.
  */
-export function ActionButton<T>(props: {
+export function ActionButton<T, R>(props: {
   label: string;
   payload: T;
-  onSubmit: (input: T) => Promise<boolean>;
+  onSubmit: (input: T) => Promise<R>;
 }): React.ReactElement {
   return (
     <button type="button" onClick={() => void props.onSubmit(props.payload)}>
@@ -288,5 +292,25 @@ export function PairField<A extends string, B extends string>(props: {
       </button>
       {props.error === undefined ? null : <em>{props.error}</em>}
     </label>
+  );
+}
+
+/**
+ * A section that runs one action and reports what came back. Its `onSend` declares the
+ * action's own three outcomes, so a warning the upstream returned alongside a success is
+ * something the component can show — which it cannot do if all it is handed is `true`.
+ * `null` is the action having no answer: a declined confirmation, or a failed request.
+ */
+export function SendButton(props: {
+  label: string;
+  month: string;
+  onSend: (input: { month: string }) => Promise<
+    { ok: true; warning?: string } | { ok: false; fieldErrors: Record<string, string> } | null
+  >;
+}): React.ReactElement {
+  return (
+    <button type="button" onClick={() => void props.onSend({ month: props.month })}>
+      {props.label}
+    </button>
   );
 }

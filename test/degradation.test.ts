@@ -16,6 +16,14 @@ import { compileApp } from "../src/compile/index.js";
 // Every test here is behavioural: the emitted module is transpiled and *run*, against
 // stubs standing in for React, the catalog and the app's own data.ts. Asserting that the
 // emitted source contains a string would not have caught any of the three.
+//
+// A later audit of three converted production apps found three more of the same kind,
+// and they are tested the same way:
+//
+//   §7.1  one failed loader rendered one error notice per section that bound it;
+//   §7.3  a JSON `null` body answered 500 where the original answered 400;
+//   §7.4  an action bound as a prop resolved only `boolean`, so a submission the upstream
+//         accepted *with a warning* was shown to the user as an outright failure.
 
 const here = (p: string) => fileURLToPath(new URL(p, import.meta.url));
 const fixturesDir = here("./fixtures/");
@@ -228,6 +236,130 @@ describe("§6.1 one failing loader degrades one section, not the page", () => {
   });
 });
 
+describe("§7.1 one failed loader reads once, however many sections bind it", () => {
+  // The over-correction of §6.1. Per-section degradation is right, but the unit it chose
+  // was the section, and a detail page hangs five sections off one loader — so a stale
+  // link printed the same sentence four times. The reporting conversion printed six, and
+  // the fourth of them replaced the card holding the controls that could have fixed it.
+  it("renders one error notice where four sections bind the loader that failed", async () => {
+    const appDir = app("app-detail");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    const views = fileOf(result.files, "views.tsx");
+
+    const names = renderPage(views, { travel: failed("This travel no longer exists.") }).map(
+      (c) => c.name,
+    );
+    expect(names.filter((n) => n === "ErrorNotice")).toHaveLength(1);
+    // The sections that needed the data are gone, and the one that never did is not.
+    expect(names).not.toContain("Breakdown");
+    expect(names.filter((n) => n === "StatCard")).toHaveLength(1);
+  });
+
+  it("puts the one notice where the first section that bound the loader was", async () => {
+    const appDir = app("app-detail");
+    const result = await compileApp(appDir, configFor(appDir));
+    const shown = renderPage(fileOf(result.files, "views.tsx"), {
+      travel: failed("This travel no longer exists."),
+    });
+    // The heading binds nothing and comes first; the notice stands in the position of
+    // the first section that did bind the failed loader, not at the top or the bottom.
+    expect(shown.map((c) => c.name)).toEqual(["StatCard", "ErrorNotice"]);
+    expect(shown[1]!.children).toEqual(["This travel no longer exists."]);
+  });
+
+  it("still reads once per distinct failure, not once per page", async () => {
+    const appDir = app("app-sections");
+    const result = await compileApp(appDir, configFor(appDir));
+    const names = renderPage(fileOf(result.files, "views.tsx"), {
+      trips: failed("500 Internal Server Error"),
+      monthlyTotal: ok("2026-08: 12 km"),
+      policy: failed("HTTP 404"),
+    }).map((c) => c.name);
+    expect(names.filter((n) => n === "ErrorNotice")).toHaveLength(2);
+  });
+
+  it("leaves the loading state per section, because a placeholder is not a sentence", async () => {
+    // Deliberately not deduplicated: `Loading` marks where a section will be, and four
+    // spinners in four places is what a page that is still arriving looks like. Four
+    // copies of one sentence is a claim made four times.
+    const appDir = app("app-detail");
+    const result = await compileApp(appDir, configFor(appDir));
+    const names = renderPage(fileOf(result.files, "views.tsx"), { travel: pending }).map(
+      (c) => c.name,
+    );
+    expect(names.filter((n) => n === "Loading")).toHaveLength(4);
+  });
+});
+
+describe("§7.4 an action's own answer reaches the component that runs it", () => {
+  /** What `useAction`'s `run` resolves to for a given answer, by running the hook. */
+  async function runAgainst(runtime: string, answer: Response | Error): Promise<unknown> {
+    const previous = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      if (answer instanceof Error) throw answer;
+      return answer;
+    }) as typeof fetch;
+    try {
+      const mod = evaluateModule(runtime, (m) => {
+        if (m === "react") return React;
+        throw new Error(`unexpected import ${m}`);
+      }) as { useAction: (p: string) => { run: (input: unknown) => Promise<unknown> } };
+      return await mod.useAction("/_actions/submitMonth").run({ month: "2026-08" });
+    } finally {
+      globalThis.fetch = previous;
+    }
+  }
+
+  const answered = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
+
+  it("type-checks a component prop declaring the action's own result type", async () => {
+    // `run` resolved `Promise<boolean>`, so a prop that wanted the answer could not be
+    // bound at all — and the two conversions that hit this declared `Promise<boolean>`
+    // instead, which is how a warning became a failure.
+    const appDir = app("app-outcome");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("distinguishes success-with-warning from success and from failure", async () => {
+    const appDir = app("app-outcome");
+    const result = await compileApp(appDir, configFor(appDir));
+    const runtime = fileOf(result.files, "runtime.tsx");
+
+    expect(await runAgainst(runtime, answered({ ok: true }))).toEqual({ ok: true });
+    // The one the audit called a blocker: the claim persisted, and the user was told it
+    // had not. `true` cannot carry this and `false` is a lie about it.
+    expect(await runAgainst(runtime, answered({ ok: true, warning: "Expense left as a draft." })))
+      .toEqual({ ok: true, warning: "Expense left as a draft." });
+    expect(await runAgainst(runtime, answered({ ok: false, fieldErrors: { month: "required" } })))
+      .toEqual({ ok: false, fieldErrors: { month: "required" } });
+  });
+
+  it("resolves null when the action never answered", async () => {
+    const appDir = app("app-outcome");
+    const result = await compileApp(appDir, configFor(appDir));
+    const runtime = fileOf(result.files, "runtime.tsx");
+    expect(await runAgainst(runtime, new Error("connection refused"))).toBeNull();
+  });
+
+  it("still gives a form a boolean verdict, and still clears the errors it cleared", async () => {
+    // useForm builds on useAction and decides from "did the submit succeed" whether the
+    // per-field errors stand. That verdict is now read off the action's own `ok` rather
+    // than off a boolean `run` invented; the clearing itself was always useAction's own
+    // state, and is unchanged.
+    const appDir = app("app-form");
+    const result = await compileApp(appDir, configFor(appDir));
+    const runtime = fileOf(result.files, "runtime.tsx");
+    expect(await submitAgainst(runtime, { ok: true })).toEqual({ verdict: true, errors: {} });
+    expect(await submitAgainst(runtime, { ok: false, fieldErrors: { km: "too far" } })).toEqual({
+      verdict: false,
+      errors: { km: "too far" },
+    });
+  });
+});
+
 describe("§6.2 a loader carries its own status to the client", () => {
   /** Run one emitted handler map against a stub data.ts / actions.ts. */
   function handlersOf(
@@ -323,6 +455,30 @@ describe("§4.2 a malformed request body is the client's error", () => {
     expect(await res.json()).toEqual({ ok: false, error: "invalid JSON body" });
   });
 
+  it("answers 400 for a body that parses but is not an object", async () => {
+    // §7.3: `JSON.parse("null")` succeeds, and `null as never` then failed on the
+    // action's first property access — a 500 where both originals answer 400. The same
+    // class as the malformed body above, and the same answer.
+    const appDir = app("app-actions");
+    const result = await compileApp(appDir, configFor(appDir));
+    const mod = evaluateModule(fileOf(result.files, "handlers.ts"), (m) => {
+      if (m.endsWith("/data")) return { rows: async () => [], distance: async () => 0 };
+      if (m.endsWith("/actions")) {
+        return { saveTrip: (input: { km: number }) => ({ ok: input.km > 0 }) };
+      }
+      throw new Error(`unexpected import ${m}`);
+    }) as { handlers: Record<string, (req: Request, ctx: unknown) => Promise<Response>> };
+
+    for (const body of ["null", "12", '"trip"', "true"]) {
+      const res = await mod.handlers["POST /_actions/saveTrip"]!(
+        new Request("http://h/_actions/saveTrip", { method: "POST", body }),
+        { params: {} },
+      );
+      expect(res.status, body).toBe(400);
+      expect(await res.json()).toEqual({ ok: false, error: "invalid JSON body" });
+    }
+  });
+
   it("still runs the action for a well-formed body", async () => {
     const appDir = app("app-actions");
     const result = await compileApp(appDir, {
@@ -354,6 +510,42 @@ describe("§4.2 a malformed request body is the client's error", () => {
     expect(seen).toEqual([{ km: 12 }]);
   });
 });
+
+/**
+ * A form's verdict and the field errors it was left holding, by running `useForm`'s own
+ * `submit` against one canned answer. Only the state carrying `fieldErrors` is watched —
+ * the other `useState` in there holds the form's values.
+ */
+async function submitAgainst(
+  runtime: string,
+  answer: unknown,
+): Promise<{ verdict: boolean; errors: unknown }> {
+  let errors: unknown = null;
+  const stub = {
+    ...React,
+    useState: (init: unknown) => [
+      typeof init === "function" ? (init as () => unknown)() : init,
+      (next: unknown) => {
+        const value = typeof next === "function" ? (next as (s: unknown) => unknown)({}) : next;
+        if (value !== null && typeof value === "object" && "fieldErrors" in value) {
+          errors = (value as { fieldErrors: unknown }).fieldErrors;
+        }
+      },
+    ],
+  };
+  const previous = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify(answer), { status: 200 })) as typeof fetch;
+  try {
+    const mod = evaluateModule(runtime, (m) => {
+      if (m === "react") return stub;
+      throw new Error(`unexpected import ${m}`);
+    }) as { useForm: (path: string, initial: object) => { submit: () => Promise<boolean> } };
+    return { verdict: await mod.useForm("/_actions/saveTrip", {}).submit(), errors };
+  } finally {
+    globalThis.fetch = previous;
+  }
+}
 
 /** Evaluate the emitted runtime against the React stub above. */
 function runOneLoader(runtime: string): unknown {
