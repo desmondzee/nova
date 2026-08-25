@@ -613,15 +613,20 @@ not deduplicated: a spinner marks where a section will be, and four of them in f
 is what a page still arriving looks like, whereas four copies of one sentence is one fact
 asserted four times.
 
-**A section that holds controls should not bind the data those controls filter.** If the
-card carrying your date pickers also binds the report they scope, a bad date range takes
-the card with it and the reader has no way left to correct the range. That is a spec
-shape, not a nova limitation, and the fix is one line of YAML: put the controls in their
+**A section that holds controls should not bind data it does not need.** If the card
+carrying your date pickers also binds the report those pickers scope, a bad date range
+takes the card with it and the reader has no way left to correct the range. Where the
+controls do not actually need that data, the fix is one line of YAML: put them in their
 own section, which binds no loader and is therefore never gated at all (see the `TabNav`
-above). Nova could instead grow a way to mark a binding as survivable, but it would buy
-nothing — a section rendered without its data hands its component `null`, so the component
-has to declare `T | null` and decide what to draw either way, which is the same edit to
-the same file as splitting the section, plus a new spec key to learn.
+above). That is the case worth checking first, and it is the one a report page usually
+has.
+
+Where the controls genuinely need the data — an entity **picker** whose entity list
+403s — splitting does not help, and nova cannot yet express what the hand-written
+originals do, which is to show the picker with the failure inline. A section is
+all-or-nothing on its loader's error, so an app that wants the page has to put the failure
+in the payload (`{ entities: [], error }` at 200) and give up the status on the wire. See
+[limitations](#limitations).
 
 `.value` is still narrowed: the conditional is written one loader at a time so that
 `trips.value` is non-null in the branch that reads it. Nothing is asserted or cast, so a
@@ -798,6 +803,10 @@ replacing its original; two more can turn a build that passed into one that repo
   counted the notices on a failed page will count fewer.
 - **A JSON body that parses to a non-object is a 400.** `null`, `12`, `"trip"` and `true`
   answered 500; both original apps answer 400. Behaviour only.
+- **`useAction` shows the refusal the action wrote.** It discarded the body of a non-2xx
+  answer and reported `403 Forbidden` where the action had written *"You do not have
+  access to invoice reporting."* — the same defect `useLoader` had, fixed the same way.
+  Behaviour only; this is what makes a status-carrying throw usable from an action.
 
 Recommended version for these: **0.2.0**, alongside the three sets below.
 
@@ -1011,6 +1020,31 @@ error state where any loader it binds failed and its loading state where any of
 them has not answered, so two loaders on one section share a fate even when only
 one of them is missing. Nothing renders half a section, and a section cannot say
 "show the table without the total".
+
+**A loader cannot carry both a payload and a status, so a section cannot show its
+own failure inline.** A generated handler answers either a value at 200 or
+`{ ok: false, error }` at the thrown status, and `useLoader` discards the body of
+any non-2xx response and nulls its `value` — so `LoaderState`'s `error` and
+`value` are never both meaningful, and the section is replaced wholesale. A
+section holding controls the reader needs *in order to recover* — an entity
+picker whose list 403s, beside the date pickers and the Run button — therefore
+has to choose between the right status on the wire and a usable page. The
+workaround, and it is a workaround, is to return the failure inside the payload
+(`{ entities: [], error }` at 200) so the section renders and prints its own
+message. Doing this properly needs three things nova does not have: a loader
+result that carries a status *beside* a value, a `useLoader` that keeps `value`
+when one is present, and a per-section way for the spec to say the error is a
+prop rather than a replacement. That is a spec-surface change and is deliberately
+not in 0.2.0.
+
+**An action refuses with a status, but not with per-field detail.** An action that
+throws `Object.assign(new Error("You may not."), { status: 403 })` is answered
+with that status, and `useAction` now surfaces that sentence in `error` — which a
+form shell renders — rather than the bare `403 Forbidden` it used to show. What
+it cannot do is refuse *and* return the `{ ok: false, fieldErrors }` envelope: a
+throw leaves the form-level `error`, and a returned rejection is always HTTP 200.
+An action wanting a status on a per-field rejection has to pick one. Authorization
+is not validation, and the format cannot yet say so in one answer.
 
 **A generic *section* component's type parameter is left to inference.** Nova writes a
 type argument for a field, because it knows the one type a field is about; a section has

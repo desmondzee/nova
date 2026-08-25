@@ -313,6 +313,33 @@ describe("§7.4 an action's own answer reaches the component that runs it", () =
 
   const answered = (value: unknown) => new Response(JSON.stringify(value), { status: 200 });
 
+  /** What `run` leaves in `state.error` for a refused request. */
+  async function messageOf(runtime: string, response: Response): Promise<string> {
+    let captured = "";
+    const stub = {
+      ...React,
+      useState: (init: unknown) => [
+        typeof init === "function" ? (init as () => unknown)() : init,
+        (next: unknown) => {
+          const err = (next as { error?: unknown }).error;
+          if (typeof err === "string") captured = err;
+        },
+      ],
+    };
+    const previous = globalThis.fetch;
+    globalThis.fetch = (async () => response) as typeof fetch;
+    try {
+      const mod = evaluateModule(runtime, (m) => {
+        if (m === "react") return stub;
+        throw new Error(`unexpected import ${m}`);
+      }) as { useAction: (p: string) => { run: (input: unknown) => Promise<unknown> } };
+      await mod.useAction("/_actions/submitMonth").run({ month: "2026-08" });
+    } finally {
+      globalThis.fetch = previous;
+    }
+    return captured;
+  }
+
   it("type-checks a component prop declaring the action's own result type", async () => {
     // `run` resolved `Promise<boolean>`, so a prop that wanted the answer could not be
     // bound at all — and the two conversions that hit this declared `Promise<boolean>`
@@ -342,6 +369,26 @@ describe("§7.4 an action's own answer reaches the component that runs it", () =
     const result = await compileApp(appDir, configFor(appDir));
     const runtime = fileOf(result.files, "runtime.tsx");
     expect(await runAgainst(runtime, new Error("connection refused"))).toBeNull();
+  });
+
+  it("shows the refusal the action wrote, rather than discarding the body", async () => {
+    // An action that throws a status-carrying error is answered with that status and
+    // `{ ok: false, error }` — the same vocabulary a loader refuses in. `run` read only
+    // the status line, so "You do not have access to invoice reporting." reached the
+    // reader as `403 Forbidden`. Same defect, same fix, as §6.2 for loaders.
+    const appDir = app("app-outcome");
+    const result = await compileApp(appDir, configFor(appDir));
+    const runtime = fileOf(result.files, "runtime.tsx");
+    const refusal = new Response(
+      JSON.stringify({ ok: false, error: "You do not have access to invoice reporting." }),
+      { status: 403 },
+    );
+    expect(await messageOf(runtime, refusal)).toBe(
+      "You do not have access to invoice reporting.",
+    );
+    // With no message on the wire the status line is still what the reader is told.
+    expect(await messageOf(runtime, new Response("", { status: 403, statusText: "Forbidden" })))
+      .toBe("403 Forbidden");
   });
 
   it("still gives a form a boolean verdict, and still clears the errors it cleared", async () => {
