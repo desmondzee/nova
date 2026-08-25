@@ -66,8 +66,9 @@ process.exit(result.ok ? 0 : 1);
 
 The app directory may be relative (resolved against the process working directory) or
 absolute; both answer identically, and every path in the result — `written`, and each
-diagnostic's `file` — comes back absolute either way. Until 0.2.0 a relative one turned
-the whole typecheck off silently, which is what this example used to demonstrate.
+diagnostic's `file` — comes back absolute either way. (In the unpublished 0.1.0 a
+relative one turned the whole typecheck off silently, which is why this example passes
+one.)
 
 Nova never reads config from disk — you pass the value, so you can keep it in
 whatever form your build already uses. `components`, `states`, `outDir` and
@@ -461,9 +462,9 @@ literal `columns:` list.
 **A literal `columns:` or `numeric:` list is checked the same way.** They are ordinary
 props — nova forwards them and your component decides what they mean — but they are the
 two names a column list is written under, and a name in one of them that is not a key of
-the row type is the same `NOVA3001`, at that key's own line. Until 0.2.0 neither was
-checked at all: `columns: [dayz]` compiled clean and rendered a column of en dashes under
-a `DAYZ` header, and a misspelled `numeric:` silently did nothing. A catalog spelling its
+the row type is the same `NOVA3001`, at that key's own line. Neither was checked before
+0.2.0: `columns: [dayz]` compiled clean and rendered a column of en dashes under a
+`DAYZ` header, and a misspelled `numeric:` silently did nothing. A catalog spelling its
 column list something else gets no check, exactly as before.
 
 The row type is taken from the one value the section reads from a loader, **including the
@@ -783,7 +784,23 @@ Codes are stable.
 
 ## Breaking changes
 
-### Since 0.1.0 — a smaller `generated/`
+**If 0.2.0 is your first install, there is nothing here to do.** This section is history,
+not instructions: it is what changed between 0.2.0 and the 0.1.0 that came before it, and
+0.1.0 was never published to npm. It existed as vendored tarballs, consumed by one host
+while nova was being built against real apps. The five sets below are the record of what
+that host found — five conversions of production apps, and two foreign consumers building
+against this README alone — and each of the "**What a host must do**" notes is addressed
+to that host, on that upgrade.
+
+It is kept rather than collapsed into the feature documentation for two reasons. Every
+entry names a defect that a real app hit, so it is the honest account of why the current
+behaviour is what it is; and each is a thing nova once did differently, which is what
+anyone reading generated code emitted by a vendored 0.1.0 needs in order to recognise it.
+
+For the format, the config and the two mounted maps as they are *now*, read the sections
+above; nothing below is a description of current behaviour.
+
+### In 0.2.0 — a smaller `generated/`
 
 A leanness pass over what nova *emits*, on the arithmetic that a line in nova's own
 source costs once and a line in `generated/` costs once per app: across the intended
@@ -816,7 +833,7 @@ changed, and only the first item below can be noticed by a host at all.
 As with the sets below, the input stamp covers the compiler *version* and not its build,
 so force one rebuild across the upgrade rather than trusting an unchanged stamp.
 
-### Since 0.1.0 — four defects three converted production apps found
+### In 0.2.0 — four defects three converted production apps found
 
 An equivalence audit converted three production apps and compared each against the
 original it replaces. One of these four was the single blocker keeping a conversion from
@@ -862,9 +879,7 @@ replacing its original; two more can turn a build that passed into one that repo
   access to invoice reporting."* — the same defect `useLoader` had, fixed the same way.
   Behaviour only; this is what makes a status-carrying throw usable from an action.
 
-Recommended version for these: **0.2.0**, alongside the three sets below.
-
-### Since 0.1.0 — what two foreign consumers found
+### In 0.2.0 — what two foreign consumers found
 
 Eight fixes from building a Vite/React SPA and an Express reporting app against this
 README alone. Three of them can turn a build that passed into one that reports, and the
@@ -903,7 +918,7 @@ The emitted `views.tsx` also hoists `const sortState = useSort()` above the load
 rather than below them, since a loader may now read it. Output stays byte-deterministic;
 it is simply not byte-identical to 0.1.0's.
 
-### Since 0.1.0 — a page that fails one part at a time
+### In 0.2.0 — a page that fails one part at a time
 
 Behaviour, not types: nothing here can turn a build that passed into one that reports, and
 no spec or catalog changes. See [failing well](#failing-well).
@@ -923,7 +938,7 @@ no spec or catalog changes. See [failing well](#failing-well).
   `{"ok":false,"error":"invalid JSON body"}` with status 400 instead of throwing out of
   the handler. A host wrapper that caught that throw will no longer see it.
 
-### Since 0.1.0 — two type holes closed
+### In 0.2.0 — two type holes closed
 
 Both change what the emitted output *asks of a host catalog*, so both can turn a build
 that passed into one that reports. Neither touches any YAML: no spec changes.
@@ -963,13 +978,10 @@ that passed into one that reports. Neither touches any YAML: no spec changes.
   grow a default for that parameter or move behind a non-generic wrapper. A field generic
   in its value type (`ChoiceField<T extends string>`) needs no change.
 
-Recommended version for these: **0.2.0**. Note that the input stamp in each emitted
-file's header covers the compiler *version*, not its build, so a host that skips
-recompilation on an unchanged stamp should force one rebuild across the upgrade.
+### In 0.1.0 — never published
 
-### In 0.1.0
-
-Two, both from giving `title:` and `default:` somewhere real to go. Neither affects a
+Kept for completeness: these landed inside the vendored 0.1.0, against the tarball before
+it. Two, both from giving `title:` and `default:` somewhere real to go. Neither affects a
 host that only mounts `pages` and writes literal filter defaults — the reference
 consumer needed no edit to its spec, its catalog or its build.
 
