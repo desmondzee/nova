@@ -45,7 +45,7 @@ export type CompileResult = {
   written: string[];
 };
 
-const VERSION = "0.0.0";
+const VERSION = "0.1.0";
 
 /**
  * Deterministic JSON: object keys are sorted recursively so two `NovaConfig` values

@@ -1,4 +1,4 @@
-# @light/nova
+# @desmondzee/nova
 
 A build-time compiler that turns a declarative YAML description of an app's UI
 into React pages and HTTP handlers.
@@ -11,14 +11,14 @@ React — never nova.
 ## Install
 
 ```bash
-pnpm add -D @light/nova typescript
+pnpm add -D @desmondzee/nova typescript
 ```
 
 There is no root export. Import from a subpath:
 
 ```ts
-import { compileApp } from "@light/nova/compile";
-import type { AppSpec } from "@light/nova/schema";
+import { compileApp } from "@desmondzee/nova/compile";
+import type { AppSpec } from "@desmondzee/nova/schema";
 ```
 
 `./compile` is the whole pipeline and loads TypeScript. `./schema` is the spec format on
@@ -29,7 +29,7 @@ YAML, validates the shape, and reports `NOVA1xxx` with real line and column numb
 reads no catalogs, resolves no names and emits nothing.
 
 ```ts
-import { parseSpec } from "@light/nova/compile";
+import { parseSpec } from "@desmondzee/nova/compile";
 
 const { spec, diagnostics } = parseSpec("apps/trips/app.yaml", source);
 ```
@@ -43,7 +43,7 @@ dependency-free fallback that pins every diagnostic to the top of the named file
 ## Use
 
 ```ts
-import { compileApp } from "@light/nova/compile";
+import { compileApp } from "@desmondzee/nova/compile";
 
 const result = await compileApp("apps/trips", {
   components: ["@acme/ui"],
@@ -101,7 +101,7 @@ the lib files, `@types/*`, your component catalog — is the same for all of the
 Pass one session to every call and that work happens once:
 
 ```ts
-import { compileApp, createSession } from "@light/nova/compile";
+import { compileApp, createSession } from "@desmondzee/nova/compile";
 
 const session = createSession();
 for (const app of apps) {
@@ -410,7 +410,7 @@ consumer needed no edit to its spec, its catalog or its build.
   nowhere to put a title, and it was emitted into every app whether or not anything read
   it.
 - **`FilterSpec["default"]` is a `PropValue`, not `unknown`.** Only a consumer of
-  `@light/nova/schema` that inspects a parsed spec is affected: what was `"2026-08"` is
+  `@desmondzee/nova/schema` that inspects a parsed spec is affected: what was `"2026-08"` is
   now `{ kind: "literal", value: "2026-08" }`, and a computed default is
   `{ kind: "binding", ref: { kind: "compute", name: "currentMonth" } }`. Nothing in the
   YAML changed.

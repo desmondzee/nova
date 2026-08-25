@@ -31,7 +31,7 @@ const SPEC = ['pages:', '  "/":', "    title: Trips", "    sections:", "      - 
   "\n",
 );
 
-describe("@light/nova/compile — parseSpec", () => {
+describe("@desmondzee/nova/compile — parseSpec", () => {
   it("validates a spec file in one call, with no PositionMap supplied by the caller", () => {
     const { spec, diagnostics } = parseSpec("app.yaml", SPEC);
     expect(diagnostics).toEqual([]);
@@ -65,7 +65,7 @@ describe("@light/nova/compile — parseSpec", () => {
   });
 });
 
-describe("@light/nova/schema — validate is callable without the compile entry point", () => {
+describe("@desmondzee/nova/schema — validate is callable without the compile entry point", () => {
   it("validates an already-parsed document with the dependency-free position fallback", () => {
     // The scenario ./schema exists for: a consumer that must not load TypeScript (or
     // even yaml) and already holds a parsed document. `atFile` is the position sidecar

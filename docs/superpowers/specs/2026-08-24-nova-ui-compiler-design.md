@@ -2,7 +2,7 @@
 
 Status: draft for review
 Date: 2026-08-24
-Repo: `nova` (the library, published as `@light/nova`). First consumer: `external-apps` (Light Apps Platform).
+Repo: `nova` (the library, published as `@desmondzee/nova`). First consumer: `external-apps` (Light Apps Platform).
 
 ---
 
@@ -132,16 +132,16 @@ reasons matter more than the choices if circumstances change.
 | D7 | **No distinction between "component library" and "escape hatch"** | Both are names resolved against modules. Promoting an app-local component to shared is moving a file and changing one path |
 | D8 | **First target: `german-mileage`**, then its eleven siblings | ~22,000 lines of near-identical UI behind one format |
 | D9 | **Generic to simple UI apps; emitted code carries no host imports** | external-apps is the first consumer, not the design target. Enforced by §2's two rules and a Light-free fixture suite |
-| D10 | **Published as `@light/nova`** | `nova` and `nova-ui` are taken on npm by dormant 2022 packages; a scope keeps the name verbatim |
+| D10 | **Published as `@desmondzee/nova`** | `nova` and `nova-ui` are taken on npm by dormant 2022 packages; a scope keeps the name verbatim |
 
 ## 4. Architecture
 
 ```
 nova (this repo)                     any host
 ────────────────                     ────────
-@light/nova/schema    spec format,   nova.config.ts          names the catalogs
+@desmondzee/nova/schema    spec format,   nova.config.ts          names the catalogs
                       validator      <catalog modules>       the components
-@light/nova/compile   validate,       apps/<slug>/app.yaml    the spec
+@desmondzee/nova/compile   validate,       apps/<slug>/app.yaml    the spec
                       read types,     apps/<slug>/data.ts     typed loaders
                       emit            apps/<slug>/actions.ts  typed mutations
                                       apps/<slug>/generated/  emitted, committed
@@ -392,7 +392,7 @@ app's own handler map. An app can be half-compiled.
 user error; an exception means an internal invariant broke.
 
 1. **Load** — parse `app.yaml` retaining line and column. The YAML dependency
-   lives here, in `@light/nova/compile`; `@light/nova/schema` stays dependency-free by
+   lives here, in `@desmondzee/nova/compile`; `@desmondzee/nova/schema` stays dependency-free by
    validating already-parsed values plus a position sidecar.
 2. **Validate** — structural check. Unknown keys are errors, not warnings;
    typos are the most common spec bug and silence is the worst response.
@@ -443,7 +443,7 @@ exports and **no `"."` entry**:
 
 ```json
 {
-  "name": "@light/nova",
+  "name": "@desmondzee/nova",
   "type": "module",
   "exports": {
     "./schema":  "./dist/schema/index.js",
@@ -453,8 +453,8 @@ exports and **no `"."` entry**:
 }
 ```
 
-Omitting the root export means `import { x } from "@light/nova"` fails to resolve, so
-there is no barrel through which `@light/nova/compile` — and therefore the 9 MB
+Omitting the root export means `import { x } from "@desmondzee/nova"` fails to resolve, so
+there is no barrel through which `@desmondzee/nova/compile` — and therefore the 9 MB
 TypeScript compiler — could be reached from an app file and pulled into the Next
 bundle. This is the same rule `middleware.ts:2` enforces today by comment for
 `@platform/core`, whose barrel re-exports the Postgres driver and ajv; here the
@@ -518,12 +518,12 @@ Concrete changes required in the host, each independently reviewable:
    generated handler entries with the app's own, and apply the `AppPages` /
    `AppHandlers` types there — the emitted files carry no host imports (§2), so
    this is where the structural shapes acquire their platform names.
-   `@light/nova/compile` is imported only here. `build-registry` runs under `tsx`
+   `@desmondzee/nova/compile` is imported only here. `build-registry` runs under `tsx`
    as a separate process before `next build`, so it is never in Next's module
    graph.
 4. **`eslint.config.mjs:77`** — the `apps/**` import allowlist currently permits
    `@platform/core|payroll|sdk|travel|ui`, `react` and `next`. It needs the
-   catalog paths for generated files. Nothing from `@light/nova` is imported at
+   catalog paths for generated files. Nothing from `@desmondzee/nova` is imported at
    runtime, so the package itself does not need adding.
 5. **A lint rule on catalog modules** — exported components must have explicit,
    named props types (§6.1). Generic props types are permitted, and are how a field
@@ -588,11 +588,11 @@ to move there, since twelve apps need it.
 
 1. `packages/ui`: add `Table`, filter bar, form field as a core PR. Independent of
    nova; unblocks everything.
-2. nova: package skeleton, build and publish loop, `@light/nova/schema` with a
+2. nova: package skeleton, build and publish loop, `@desmondzee/nova/schema` with a
    position-aware validator, and the Light-free fixture catalog its tests compile
    against (§2, rule 1). The fixture suite exists from the first commit, so the
    generality constraint is checked continuously rather than audited later.
-3. nova: `@light/nova/compile` — catalog introspection and name resolution.
+3. nova: `@desmondzee/nova/compile` — catalog introspection and name resolution.
 4. nova: emit `pages.tsx` + `types.ts` with the line map; diagnostic remapping.
 5. nova: loaders and actions — emit handler entries, client fetch, loading, error,
    race guard, confirm.
@@ -620,7 +620,7 @@ to move there, since twelve apps need it.
 
 ## 12. Open questions
 
-- **npm scope ownership.** `@light/nova` has no published package, but that does
+- **npm scope ownership.** `@desmondzee/nova` has no published package, but that does
   not prove the `@light` scope is unclaimed. Confirm before the first publish;
   `@light-space` matches the GitHub org and is the fallback.
 - **The exact spec vocabulary** in §5. The binding model (§6) is settled; the

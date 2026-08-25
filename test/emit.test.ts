@@ -116,7 +116,7 @@ describe("emitRuntime", () => {
     for (const hook of ["useLoader", "useFilters"]) {
       expect(text).toContain(`export function ${hook}`);
     }
-    expect(text).not.toContain("@light/nova");
+    expect(text).not.toContain("@desmondzee/nova");
   });
 
   it("omits a hook no page imports", () => {
@@ -194,7 +194,7 @@ describe("emitViews", () => {
     // would fail a host tsconfig with `noUnusedLocals`.
     expect(text).toContain('import { ErrorNotice, Loading, StatCard, Table } from "../../catalog/ui";');
     expect(text).not.toContain("EmptyState");
-    expect(text).not.toContain("@light/nova");
+    expect(text).not.toContain("@desmondzee/nova");
     expect(text).not.toContain("@platform/");
   });
 
