@@ -55,7 +55,16 @@ describe("moduleExports", () => {
   it("lists every export with callability and position", () => {
     const p = createProgram({ tsconfigPath: TSCONFIG, roots: [CATALOG] })!;
     const names = moduleExports(p.program, CATALOG).map((e) => e.name);
-    expect(names).toEqual(["EmptyState", "ErrorNotice", "Loading", "MONTHS", "StatCard", "Table", "formatKm"]);
+    expect(names).toEqual([
+      "EmptyState",
+      "ErrorNotice",
+      "Loading",
+      "MONTHS",
+      "PageShell",
+      "StatCard",
+      "Table",
+      "formatKm",
+    ]);
   });
 
   it("marks functions callable and constants not", () => {

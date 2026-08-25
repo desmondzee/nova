@@ -83,7 +83,8 @@ describe("the route map is readable from a server component", () => {
     // The map module is what the host reads from a server component.
     expect(pages).not.toContain("use client");
     expect(pages).toContain("export const pages:");
-    expect(pages).toContain("export const titles:");
+    // No titles map: `title:` reaches `config.shell` inside the page now.
+    expect(pages).not.toContain("titles");
     expect(pages).toContain('"/": Page_0,');
     expect(pages).toContain('from "./views"');
     // …and holds no JSX of its own, so nothing in it can need the client.
@@ -107,10 +108,9 @@ describe("the route map is readable from a server component", () => {
     const pages = evaluateModule(fileOf(result.files, "pages.tsx"), (m) => {
       if (m === "./views") return stub;
       throw new Error(`unexpected import ${m}`);
-    }) as { pages: Record<string, unknown>; titles: Record<string, string> };
+    }) as { pages: Record<string, unknown> };
     expect(Object.keys(pages.pages).sort()).toEqual(["/", "/trip/:id"]);
     expect(pages.pages["/"]).toBe(stub.Page_0);
-    expect(pages.titles).toEqual({ "/": "Trips", "/trip/:id": "Trip" });
   });
 });
 

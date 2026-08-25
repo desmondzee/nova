@@ -3,6 +3,11 @@ import { diagnostic, suggest, type Diagnostic, type SpecPath } from "../schema/d
 import { componentKey, type AppSpec, type PageSpec, type PropValue, type SectionSpec } from "../schema/types.js";
 import { isComponentName, type Catalog } from "./catalog.js";
 import type { NovaConfig } from "./config.js";
+// A spec-shape predicate, not an emitter: `pageNeedsFilters` answers whether a generated
+// page will declare a `filters` local at all. It lives beside the code that emits one so
+// the two cannot drift; nothing at runtime flows the other way (emit/pages.ts's import of
+// this module is type-only), so there is no cycle.
+import { pageNeedsFilters } from "./emit/pages.js";
 import type { PositionMap } from "./load.js";
 import {
   createProgram,
@@ -190,6 +195,26 @@ export function resolveApp(
     );
     const filterNames = new Set(page.filters.map((f) => f.name));
     walk(page.sections, page, routeParams, filterNames, ["pages", page.route, "sections"]);
+
+    // A filter's `default:` may be a `compute#` binding, which the generated page calls
+    // for the starting value. The name is reported whether or not the page ends up
+    // declaring a `filters` local, but only *recorded* when it does: `computes` decides
+    // whether views.tsx imports the compute module at all, and an import nothing calls
+    // fails a host with `noUnusedLocals`. pageNeedsFilters is the same predicate the
+    // emitter uses to decide that, so the two agree by construction rather than by
+    // coincidence — the reason hooksUsed is shared the same way.
+    for (const filter of page.filters) {
+      const value = filter.default;
+      if (value?.kind !== "binding") continue;
+      const at: SpecPath = ["pages", page.route, "filters", filter.name, "default"];
+      const name = value.ref.name;
+      if (!computeExports.has(name)) {
+        report("NOVA2004", `compute.ts has no export '${name}'`, ctx.positions.at(at), computeExports, name);
+      } else if (pageNeedsFilters(page)) {
+        computes.add(name);
+        computeOrigins[name] ??= at;
+      }
+    }
   }
 
   // One name may not mean two things. `types.ts` derives `export type ${Cap}` from the
@@ -234,6 +259,9 @@ export function resolveApp(
     loading: ctx.config.states.loading,
     error: ctx.config.states.error,
     empty: ctx.config.states.empty,
+    // Not a state, but resolved on exactly the same terms: a catalog name from config
+    // that nova renders itself rather than forwarding a spec's props to.
+    shell: ctx.config.shell,
   };
   const stateEntries = new Map<keyof typeof stateNames, ReturnType<Catalog["get"]>>();
   for (const [key, name] of Object.entries(stateNames) as [
@@ -247,19 +275,23 @@ export function resolveApp(
       out.push(
         diagnostic(
           "NOVA2001",
-          `state component '${name}' is not in any catalog`,
+          `configured ${key} component '${name}' is not in any catalog`,
           ctx.positions.at([]),
           { hint: `available: ${ctx.catalog.names().join(", ")}` },
         ),
       );
     }
   }
-  if (loaders.size > 0) {
-    for (const key of ["loading", "error"] as const) {
-      const entry = stateEntries.get(key);
-      if (entry) addComponent(stateNames[key], specifierFromOutDir(entry.module, entry.file), ctx.positions.at([]));
-    }
-  }
+  const named = (key: keyof typeof stateNames): void => {
+    const entry = stateEntries.get(key);
+    const name = stateNames[key];
+    if (!entry || name === undefined) return;
+    addComponent(name, specifierFromOutDir(entry.module, entry.file), ctx.positions.at([]));
+  };
+  if (loaders.size > 0) for (const key of ["loading", "error"] as const) named(key);
+  // Every page is wrapped in the shell, so one page is enough to need it — and a spec
+  // with no pages at all emits no JSX, where importing it would be an unused import.
+  if (spec.pages.length > 0) named("shell");
 
   const fatal = out.some((d) => d.severity === "error");
   return {

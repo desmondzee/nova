@@ -218,27 +218,67 @@ describe("emitPages", () => {
     expect(text).toContain('"/": Page_0,');
   });
 
-  it("emits each page's title into a titles map rather than discarding it", () => {
-    // `title:` was validated, stored on PageSpec and then read by no emitter at all.
-    // Nova ships no shell component to render it into (states names only
-    // loading/error/empty), so it is emitted as a map the host mounts — the same
-    // contract as `pages` and `handlers`.
+  it("emits no titles map, because a page's title goes to its shell", () => {
+    // Re-valued from "emits each page's title into a titles map": the map existed only
+    // because nova had nowhere to render a title, and no host ever mounted it. `title:`
+    // now reaches `config.shell` inside the page, so the second, unused route to it is
+    // gone rather than kept.
     const { text } = emitPages(resolved(), config);
-    expect(text).toContain("export const titles: Record<string, string> = {");
-    expect(text).toContain('"/": "Trips",');
-    expect(text).toContain('"/trip/:id": "Trip",');
+    expect(text).not.toContain("titles");
+    expect(text).toContain("export const pages: Record<");
+  });
+});
+
+describe("a page shell", () => {
+  const withShell: NovaConfig = { ...config, shell: "PageShell" };
+
+  it("wraps a page's sections in the shell and hands it the page's title", () => {
+    const { text } = emitViews(resolvedFixture("app-basic", withShell), withShell);
+    expect(text).toContain('<PageShell title={"Trips"}>');
+    expect(text).toContain("</PageShell>");
+    expect(text).not.toContain("<>");
+    // Imported like any other catalog component — nova ships none of its own.
+    expect(text).toContain('import { ErrorNotice, Loading, PageShell, StatCard, Table } from "../../catalog/ui";');
   });
 
-  it("emits an empty titles map when no page declares a title", () => {
+  it("omits title for a page that declares none", () => {
     const app = resolved();
     const untitled = {
       ...app,
       spec: { pages: app.spec.pages.map(({ title: _title, ...rest }) => rest) },
     };
-    const { text } = emitPages(untitled, config);
-    expect(text).toContain("export const titles: Record<string, string> = {\n};");
+    const { text } = emitViews(untitled, withShell);
+    expect(text).toContain("<PageShell>");
+    expect(text).not.toContain("title={");
   });
 
+  it("emits a bare fragment when no shell is configured", () => {
+    const { text } = emitViews(resolved(), config);
+    expect(text).toContain("<>");
+    expect(text).toContain("</>");
+    expect(text).not.toContain("PageShell");
+  });
+
+  it("maps the shell's own line back to the page that produced it", () => {
+    const { text, map } = emitViews(resolvedFixture("app-basic", withShell), withShell);
+    // The opening tag on its own line — not the one inlined into the error state above it.
+    const lineNo = text.split("\n").findIndex((l) => l.trim().startsWith("<PageShell")) + 1;
+    expect(map.get(lineNo)).toEqual(["pages", "/"]);
+  });
+});
+
+describe("filter defaults", () => {
+  it("stringifies a literal default", () => {
+    const { text } = emitViews(resolved(), config);
+    expect(text).toContain('const filters = useFilters({ "month": "2026-08" });');
+  });
+
+  it("calls the compute function a binding default names", () => {
+    const app = resolvedFixture("app-computed-default");
+    const { text } = emitViews(app, config);
+    expect(text).toContain('const filters = useFilters({ "month": compute.currentMonth() });');
+    expect(app.computes).toEqual(["currentMonth"]);
+  });
 });
 
 describe("emitHandlers", () => {

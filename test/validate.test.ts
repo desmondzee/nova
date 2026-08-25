@@ -29,7 +29,11 @@ describe("validate", () => {
     const page = spec!.pages[0]!;
     expect(page.route).toBe("/");
     expect(page.title).toBe("Mileage");
-    expect(page.filters).toEqual([{ name: "month", default: "2026-08" }]);
+    // A filter default is a PropValue now, so a literal says so — which is what lets
+    // `default: compute#currentMonth` be the same field rather than a second one.
+    expect(page.filters).toEqual([
+      { name: "month", default: { kind: "literal", value: "2026-08" } },
+    ]);
     expect(page.sections).toHaveLength(2);
     expect(page.sections[0]!.component).toEqual({ kind: "catalog", name: "StatCard" });
     expect(page.sections[0]!.props.label).toEqual({ kind: "literal", value: "This month" });
@@ -38,6 +42,29 @@ describe("validate", () => {
       ref: { kind: "data", name: "monthlyTotal", path: [] },
     });
     expect(page.sections[1]!.props.columns).toEqual({ kind: "literal", value: ["date", "km"] });
+  });
+
+  it("accepts a compute# binding as a filter default", () => {
+    // Not a sentinel: `default: current` would be an untyped, host-specific vocabulary
+    // that only ever grows. A binding reuses the machinery every other reference uses
+    // and stays checked against the `string` a filter holds.
+    const { spec, diagnostics } = check(
+      'pages:\n  "/":\n    filters:\n      month: { default: compute#currentMonth }\n    sections: []\n',
+    );
+    expect(diagnostics).toEqual([]);
+    expect(spec!.pages[0]!.filters).toEqual([
+      { name: "month", default: { kind: "binding", ref: { kind: "compute", name: "currentMonth" } } },
+    ]);
+  });
+
+  it("reports a filter default bound to any namespace but compute", () => {
+    const { diagnostics } = check(
+      'pages:\n  "/":\n    filters:\n      month: { default: data#trips }\n    sections: []\n',
+    );
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]!.code).toBe("NOVA1013");
+    expect(diagnostics[0]!.message).toContain("compute#");
+    expect(diagnostics[0]!.line).toBe(4);
   });
 
   it("reports an unknown page key with a suggestion", () => {

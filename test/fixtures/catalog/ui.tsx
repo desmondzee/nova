@@ -29,3 +29,19 @@ export const MONTHS = ["Jan", "Feb"];
 export function formatKm(n: number): string {
   return `${n} km`;
 }
+
+/**
+ * The page shell: nova wraps every page's sections in it and hands it the page's
+ * `title:`. `title` is optional because a page need not declare one.
+ */
+export function PageShell(props: {
+  title?: string;
+  children: React.ReactNode;
+}): React.ReactElement {
+  return (
+    <main>
+      {props.title === undefined ? null : <h1>{props.title}</h1>}
+      <div className="stack">{props.children}</div>
+    </main>
+  );
+}

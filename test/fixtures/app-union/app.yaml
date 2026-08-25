@@ -1,0 +1,14 @@
+pages:
+  "/":
+    sections:
+      - Form:
+          submit: actions#saveTrip
+          fields:
+            - TextField: { name: purpose, label: Purpose }
+            - ChoiceField:
+                name: vehicle
+                label: Vehicle
+                initial: car
+                options:
+                  - { value: car, label: Car }
+                  - { value: van, label: Van }

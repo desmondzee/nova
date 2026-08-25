@@ -48,6 +48,7 @@ import { compileApp } from "@light/nova/compile";
 const result = await compileApp("apps/trips", {
   components: ["@acme/ui"],
   states: { loading: "Loading", error: "ErrorNotice" },
+  shell: "PageShell",
   outDir: "generated",
   tsconfigPath: "tsconfig.json",
   basePath: "/api/apps/trips",
@@ -74,6 +75,24 @@ a host that serves apps from the site root.
 
 `states.loading` and `states.error` are required and `states.empty` is optional; see
 [what nova renders itself](#what-nova-renders-itself).
+
+`shell` is optional and names the component every page is wrapped in — **the one place
+spacing and structure between top-level sections belongs**. Nova hands it the page's
+`title:` and the sections as `children`:
+
+```tsx
+<PageShell title={"Trips"}>
+  <FilterBar … />
+  <Table … />
+</PageShell>
+```
+
+It wraps the loading and error states too, so a page's own chrome does not vanish while
+it loads. Without it a page's sections emit into a bare `<></>` — which is what they did
+before shells existed, so leaving `shell` unset changes nothing. The cost of leaving it
+unset is that vertical rhythm has nowhere to live but inside each component (a
+`mt-4 first:mt-0` on every section-level component), which is a layout concern pushed
+into components and a convention every host would otherwise invent for itself.
 
 ### Compiling more than one app
 
@@ -109,10 +128,9 @@ apps/trips/
 └── generated/     emitted: pages.tsx, views.tsx, handlers.ts, types.ts, runtime.tsx, __contract.ts
 ```
 
-`pages.tsx` exports two maps: `pages`, keyed by route, and `titles`, carrying each
-page's `title:`. Nova ships no shell component and `states` names only the loading and
-error components, so there is nowhere in a generated page for a title to go —
-the host mounts `titles` wherever its own layout puts one, exactly as it mounts `pages`.
+`pages.tsx` exports one map: `pages`, keyed by route. It used to export a second one,
+`titles`, because a page's `title:` had nowhere to go; `shell` is that somewhere now, so
+the map is gone rather than kept as an unused second route to the same string.
 
 `pages.tsx` and `views.tsx` are one module split in two, and the split is load-bearing
 under React Server Components. `views.tsx` carries `"use client"` and exports one
@@ -120,12 +138,38 @@ component per route (`Page_0`, `Page_1`, …); `pages.tsx` carries **no** direct
 imports them. A server module that imports a `"use client"` module receives *client
 references* rather than values, so a route map exported from the client half reads back
 as `{}` — the host matches no route and 404s with nothing to show for it. Mount `pages`
-and `titles` from `pages.tsx`; nothing needs to import `views.tsx` directly.
+from `pages.tsx`; nothing needs to import `views.tsx` directly.
 
 A filter is a name and an optional `default`. The value is kept in the query string, so
 a refresh preserves it, and it feeds the input object of every loader on the page.
-`default` is a plain literal: there is no widget vocabulary and no computed sentinel, so
-`default: current` would ship the string `"current"` rather than the current month.
+`default` is a literal, **or a `compute#` binding nova calls for the value**:
+
+```yaml
+filters:
+  month: { default: compute#currentMonth }   # opens on the current month
+```
+
+```ts
+// compute.ts
+export function currentMonth(): string {
+  return new Date().toISOString().slice(0, 7);
+}
+```
+
+which emits `useFilters({ "month": compute.currentMonth() })`. A binding rather than a
+magic string: `default: current` would be an untyped, host-specific vocabulary that only
+ever grows, whereas a binding reuses the machinery every other reference uses, keeps time
+handling in your code, and is checked — a `currentMonth` returning a `number` is a type
+error at the page's own `filters:` block, because a filter value is a `string`. Only
+`compute#` is accepted; any other namespace is `NOVA1013`, since a `data#` value is
+asynchronous and arrives after the filter has already fed its own loader, and
+`params.`/`filters.` are page state that does not exist yet when a default is needed.
+
+**A computed default is evaluated during render, on the server as well as in the
+browser.** Keep it a pure function of the clock and nothing else; two processes in
+different time zones, or a render that straddles midnight on the 1st, can disagree, and
+the client's answer is the one that survives. The value is a seed in either case: the
+effect that adopts the query string still overwrites it whenever the URL carries one.
 
 ```yaml
 # app.yaml
@@ -186,6 +230,43 @@ three things are compile errors at the spec line rather than runtime surprises:
 
 `initial:` on a field is its starting value, defaulting to `""`. A `NumberField` that does
 not say `initial: 0` gets a type error at the form, which is the right place to be told.
+
+### Binding a union-typed key
+
+An action whose input narrows a key — `vehicle: "car" | "van"` — needs a field component
+that can carry that type. `onChange`'s parameter type comes from the component, so a
+picker declaring `onChange(value: string): void` cannot be bound to it: `string` is not
+assignable to the union, and rightly so, since such a picker may emit `"lorry"`. **Write
+the field component generic in the value it carries**:
+
+```tsx
+export function ChoiceField<T extends string>(props: {
+  name: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  error?: string;
+}): React.ReactElement { … }
+```
+
+Nova emits the same unannotated lambda it always did — `(value) => form.set("vehicle", value)`
+— and TypeScript infers `T` from the props around it. This supersedes the earlier rule
+that a catalog component's props type must be non-generic; a generic *value* type is the
+mechanism that keeps the binding checked, so forbidding it only forced hosts to widen the
+action's own input to `string` and narrow inside it, losing exactly the guarantee this
+project exists to provide.
+
+Nothing is cast, so nothing is silenced. What it still catches:
+
+| Spec | Diagnostic |
+| --- | --- |
+| an option outside the union (`{ value: lorry }`) | `NOVA3001` at the field's line: `'"car" \| "van" \| "lorry"' is not assignable to '"car" \| "van"'` |
+| a plain `string` picker on the union key | `NOVA3001` at the field's line: `'string' is not assignable to '"car" \| "van"'` |
+| a `NumberField` on a `string` key | unchanged — the component's own `onChange` still decides |
+| a `name:` the action does not accept | unchanged |
+
+The constraint (`T extends string` above) is what keeps the literal types from widening
+during inference, so declare one rather than a bare `<T>`.
 
 Nova supplies `onSubmit`, `busy` and `error` to the form component and `value`, `onChange`
 and `error` to each field, so a catalog's field components must accept those — the exact
@@ -256,6 +337,7 @@ not match is a `NOVA3001` on every use, which is a poor way to discover it.
 
 | Where | What nova writes | What your component must declare |
 | --- | --- | --- |
+| `shell` | `<PageShell title={"Trips"}>` … `</PageShell>` around the page | `title?: string` (omitted for a page with no `title:`) and `children` |
 | `states.loading` | `<Loading />` | every prop optional — it is given none at all |
 | `states.error` | `<ErrorNotice>{message}</ErrorNotice>` | `children` — the message is not a prop |
 | a form shell (`submit:`) | `busy`, `error`, `onSubmit`, its fields as children | `busy: boolean`, `error: string \| null`, `onSubmit: () => Promise<boolean>`, `children` |
@@ -299,7 +381,11 @@ Codes are stable.
   action); `NOVA1011` more than one sortable section on a page; `NOVA1012` a
   `refreshes:` naming a loader that page's own sections do not bind — the next
   free number in the block, and a spec-file problem like the rest of it, since it
-  is answered from the page's own text with no catalog or type information.
+  is answered from the page's own text with no catalog or type information;
+  `NOVA1013` a filter `default:` bound to a namespace other than `compute#` — the
+  next free number after it, and in this block for the same reason: whether
+  `data#trips` may be a default is answered by the spec's own text, before any
+  catalog is read.
 - `NOVA2xxx` — name resolution: an unknown component, a missing catalog
   module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, a
   filter/route parameter reference that doesn't match its page, or one name
@@ -312,6 +398,26 @@ Codes are stable.
   generated code (for example malformed output from a bad template edge
   case). `NOVA3002` on its own is a signal of a nova bug, not a problem with
   your spec.
+
+## Breaking changes
+
+Two, both from giving `title:` and `default:` somewhere real to go. Neither affects a
+host that only mounts `pages` and writes literal filter defaults — the reference
+consumer needed no edit to its spec, its catalog or its build.
+
+- **`pages.tsx` no longer exports `titles`.** A host that mounts it must stop: configure
+  `shell` and render the title there instead. The map existed only because nova had
+  nowhere to put a title, and it was emitted into every app whether or not anything read
+  it.
+- **`FilterSpec["default"]` is a `PropValue`, not `unknown`.** Only a consumer of
+  `@light/nova/schema` that inspects a parsed spec is affected: what was `"2026-08"` is
+  now `{ kind: "literal", value: "2026-08" }`, and a computed default is
+  `{ kind: "binding", ref: { kind: "compute", name: "currentMonth" } }`. Nothing in the
+  YAML changed.
+
+Also relaxed, which breaks nothing: a catalog component's props type **may** now be
+generic. The old rule said it must not be, and that rule was what made a union-typed
+action input unbindable.
 
 ## Limitations
 
@@ -376,6 +482,13 @@ page shows its loading component while any of its loaders has a null value.
 A loader that legitimately resolves to `null` — `Promise<Trip | null>`, an
 ordinary signature — therefore pins the page on the loading state. The
 `loading` flag `useLoader` maintains is not read by any generated page.
+
+**A computed filter default is not a server-decided value.** `compute#currentMonth` runs
+during render in both processes rather than being resolved once on the server and handed
+to the client, because nova emits no server-to-client data channel and the generated page
+has nowhere to receive one. It is right for a clock-derived default and wrong for
+anything a request would have to be asked for — a per-user preference, a tenant setting.
+Those belong in a loader.
 
 **Loading and error states are page-level, not per binding.** One slow
 loader blanks the whole page, and one failing loader replaces it with the

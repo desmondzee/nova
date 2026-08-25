@@ -12,6 +12,19 @@ export type NovaConfig = {
    * checked against the catalog, so a host that has one can keep naming it.
    */
   states: { loading: string; error: string; empty?: string };
+  /**
+   * Catalog component wrapping every page: nova renders `<Shell title={…}>` around a
+   * page's sections — and around its loading and error states, so the page's own chrome
+   * does not vanish while it loads. It receives the page's `title:` (omitted when the
+   * page declares none) and the sections as `children`, and it is where spacing between
+   * top-level sections belongs.
+   *
+   * Optional. Without one a page's sections emit into a bare `<></>`, which is what
+   * every generated page did before shells existed — so leaving it unset changes
+   * nothing. With one, `title:` has somewhere to go; that is why there is no longer a
+   * `titles` map.
+   */
+  shell?: string;
   /** Directory name, relative to the app folder, for emitted files. */
   outDir: string;
   /** tsconfig used to resolve modules and typecheck emitted output. */

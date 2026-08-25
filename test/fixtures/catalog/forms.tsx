@@ -181,3 +181,29 @@ export function SortableTable(props: {
     </table>
   );
 }
+
+/**
+ * A picker generic in the value it carries. `T` is inferred from the key the field is
+ * bound to *and* from `options`, so binding it to a union-typed key of an action's input
+ * works and an option outside that union is still a type error.
+ */
+export function ChoiceField<T extends string>(props: {
+  name: string;
+  label: string;
+  options: ReadonlyArray<{ value: T; label: string }>;
+  value: T;
+  onChange: (value: T) => void;
+  error?: string;
+}): React.ReactElement {
+  return (
+    <label htmlFor={props.name}>
+      {props.label}
+      {props.options.map((o) => (
+        <button key={o.value} type="button" onClick={() => props.onChange(o.value)}>
+          {o.label}
+        </button>
+      ))}
+      {props.error === undefined ? null : <em>{props.error}</em>}
+    </label>
+  );
+}

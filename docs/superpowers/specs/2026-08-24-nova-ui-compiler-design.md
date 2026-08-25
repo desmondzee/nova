@@ -196,9 +196,21 @@ example showed `month: { type: month, default: current }`, which reads as if `ty
 selected a month widget and `current` resolved to the current month. Neither happened:
 `type` was required and read by no part of the compiler — `month`, `select` and a typo
 like `mnoth` all behaved identically — and `default: current` shipped the literal
-four-character string `"current"` to the loader. Both were removed rather than
-half-built; a spec that still spells `type:` now gets NOVA1001 "unknown key" instead of
-a silent no-op. `default` is an ordinary literal.
+four-character string `"current"` to the loader. `type` was removed rather than
+half-built; a spec that still spells it now gets NOVA1001 "unknown key" instead of a
+silent no-op.
+
+`default` is a literal **or a `compute#` binding**, which the generated page calls for
+the value: `month: { default: compute#currentMonth }`. That is the shape "the current
+month" settled into. A sentinel (`current`, `today`, `startOfQuarter`) was rejected as a
+vocabulary that is untyped, host-specific and endlessly extensible, and that would have
+put a calendar inside the compiler; a binding reuses §6's machinery, is checked against
+the `string` a filter holds, and leaves time handling in the app's own code. Only
+`compute#` is admitted — a `data#` value is asynchronous and arrives after the filter has
+already fed its own loader, and `params.`/`filters.` are page state that does not exist
+yet at the moment a default is needed — so any other namespace is NOVA1013. The call is
+evaluated during render in both processes; nova emits no server-to-client channel, so a
+default that has to be *decided* on the server is a loader, not a default.
 
 **There is no `- action:` section form.** A section's single key is a component
 reference (§6.1), so the original `- action: { label, fn, confirm }` block does not
@@ -244,6 +256,16 @@ re-solved dozens of times, often inconsistently:
   during implementation: 43 files hand-roll a table and the real ones sort. Nova
   owns the state and its round trip only; ordering the rows stays the component's
   business under D3, exactly as pagination does.
+- **Where a page's sections go.** Added during implementation: sections emitted into
+  a bare `<></>`, so a host had no parent to hang vertical rhythm on and put a
+  `mt-4 first:mt-0` inside every catalog component instead — a layout concern pushed
+  down into components, and a convention each host would invent for itself. Nova now
+  wraps every page (its loading and error states included) in a host-supplied
+  `shell` component and hands it the page's `title:`. Under D3 that is still no
+  component of nova's: the shell is a catalog name from config, resolved and checked
+  like `states.loading`, and optional — without one the fragment is what it always
+  was. It is also what retired the `titles` map: the title had nowhere to go, and now
+  it has.
 
 **The shape the last four settled into.** A section that carries `submit: actions#x` is
 a form; its `fields:` each name a key of that action's input type. `filters.month.set` is
@@ -297,10 +319,23 @@ that is app-local is referenced by path — `./views/charts#BridgeChart` — whi
 makes it visible in the spec and in review that the app has stepped outside the
 shared library.
 
-**Catalog modules must export components with explicit, named, non-generic props
-types.** Generics, `forwardRef` and inferred props defeat introspection. This is
-enforced by a lint rule on the catalog files and by a compiler error when a
-referenced component's props cannot be read — not a silent degradation.
+**Catalog modules must export components with explicit, named props types.** Inferred
+props defeat introspection, and the emitted JSX has nothing to bind against. This is
+enforced by a lint rule on the catalog files, not by nova, which reads a catalog export's
+callability and nothing more.
+
+**Revised during implementation: props types may be generic.** The original rule
+forbade it, on the reasoning that a generic defeats introspection. It does not — nova
+never reads a props type, it emits JSX and lets `tsc` check it, so a type parameter is
+resolved by ordinary inference at the call site. Worse, the rule was actively harmful:
+an action input narrowing a key (`vehicle: "car" | "van"`) could not be bound by any
+non-generic field, because a picker declaring `onChange(value: string)` may emit
+`"lorry"`, so the only way through was to widen the action's own input to `string` and
+narrow inside it — losing the guarantee at exactly the place a spec compiler should be
+adding one. A field generic in its value type (`ChoiceField<T extends string>`) binds the
+union with nothing cast and nothing silenced: an option outside the union is still a
+NOVA3001 at that field's spec line. `forwardRef` was already fine (it has a call
+signature) and is likewise not forbidden.
 
 ### 6.2 Data — `data#trips`
 
@@ -445,9 +480,10 @@ into the emitted header. Worth having because the typecheck stage boots a
 Under React Server Components a server module that imports a `"use client"` module
 receives *client references* rather than values, so a route map exported from the
 client half reads back as `{}` — the host matches no route and 404s silently. The
-page components therefore live in `views.tsx` (`"use client"`) and the `pages` /
-`titles` maps in `pages.tsx`, which carries no directive and imports the components
-by name. That is the same split a hand-written app in such a host already uses.
+page components therefore live in `views.tsx` (`"use client"`) and the `pages`
+map in `pages.tsx`, which carries no directive and imports the components
+by name. (A `titles` map was emitted beside it until a page shell gave `title:` a place
+inside the page; no consuming host ever mounted it.) That is the same split a hand-written app in such a host already uses.
 
 Two consequences of the same fact, both of which cost a running app before they were
 understood:
@@ -490,7 +526,8 @@ Concrete changes required in the host, each independently reviewable:
    catalog paths for generated files. Nothing from `@light/nova` is imported at
    runtime, so the package itself does not need adding.
 5. **A lint rule on catalog modules** — exported components must have explicit,
-   named, non-generic props types (§6.1).
+   named props types (§6.1). Generic props types are permitted, and are how a field
+   binds a union-typed key of an action's input.
 6. **`generated/`, not `.generated/`** — a leading dot changes behaviour in
    tsconfig `include` globs, eslint's default ignores and npm packing at once, for
    no benefit.
@@ -538,7 +575,7 @@ to move there, since twelve apps need it.
 
 | Risk | Mitigation |
 | --- | --- |
-| Props introspection defeated by generics / `forwardRef` | Lint rule on catalogs plus a hard compiler error, never silent degradation (§6.1) |
+| Props introspection defeated by inferred props | Lint rule on catalogs (§6.1). Generics and `forwardRef` turned out not to be a risk at all: nova never reads a props type — it emits JSX and lets `tsc` check it — so both resolve by ordinary inference at the call site |
 | Escape hatches spread until specs are shells around custom React | The compiler reports each app's escaped share in build output; app-local components are referenced by path, so they are visible in the spec and in review |
 | The format grows toward a programming language | Anything not expressible is a component reference. That is the pressure valve that keeps expressions out of YAML |
 | `packages/ui` gaps block the first conversion | `Table`, filter bar and form field are prerequisites, sequenced first in §11 |

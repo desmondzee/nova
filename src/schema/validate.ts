@@ -188,7 +188,22 @@ export function validate(
         continue;
       }
       const filter: FilterSpec = { name };
-      if (raw.default !== undefined) filter.default = raw.default;
+      if (raw.default !== undefined) {
+        // A default is a value, not a callback: `compute#x` is *called* for it, which is
+        // why no other namespace fits. `data#x` is asynchronous and arrives after the
+        // filter has already fed its own loader; `actions#x` mutates; `params.`/`filters.`
+        // are page state that does not exist yet at the moment a default is needed.
+        const value = toPropValue(raw.default);
+        if (value.kind === "binding" && value.ref.kind !== "compute") {
+          report(
+            "NOVA1013",
+            `filter '${name}' has a ${value.ref.kind} binding as its default — a default is a literal or a compute# binding, which nova calls for the value`,
+            [...path, name, "default"],
+          );
+        } else {
+          filter.default = value;
+        }
+      }
       filters.push(filter);
     }
     return filters;

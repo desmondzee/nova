@@ -1,0 +1,9 @@
+pages:
+  "/":
+    title: Trips
+    filters:
+      month: { default: compute#currentMonth }
+    sections:
+      - Table:
+          rows: data#trips
+          columns: [date, km]

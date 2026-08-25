@@ -30,6 +30,14 @@ function app(name: string): string {
   cpSync(join(fixturesDir, "catalog"), join(root, "catalog"), { recursive: true });
   return join(root, name);
 }
+/** Rewrite one fragment of a scratch app's spec, asserting it was there to rewrite. */
+function edit(appDir: string, from: string, to: string): void {
+  const specFile = join(appDir, "app.yaml");
+  const source = readFileSync(specFile, "utf8");
+  expect(source).toContain(from);
+  writeFileSync(specFile, source.replace(from, to));
+}
+
 afterEach(() => {
   for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
 });
@@ -170,13 +178,6 @@ describe("table sorting", () => {
 
 describe("forms", () => {
   /** The fixture spec with one substitution applied, written back into the copied app. */
-  function edit(appDir: string, from: string, to: string): void {
-    const specFile = join(appDir, "app.yaml");
-    const source = readFileSync(specFile, "utf8");
-    expect(source).toContain(from);
-    writeFileSync(specFile, source.replace(from, to));
-  }
-
   it("compiles a form clean under the strict host tsconfig", async () => {
     const appDir = app("app-form");
     const result = await compileApp(appDir, {
@@ -530,5 +531,142 @@ describe("round trip", () => {
     expect(mismatch!.col).not.toBe(1);
     // The `rows: data#trips` binding is the only place "trips" is referenced.
     expect(mismatch!.line).toBe(4);
+  });
+});
+
+describe("a page shell", () => {
+  // §8.2 of the re-verify report: sections emitted into a bare `<></>`, so a host had no
+  // parent to hang vertical rhythm on and put `mt-4 first:mt-0` inside every catalog
+  // component instead — a layout concern pushed into components, invented once per host.
+
+  it("wraps a page's sections, and its loading and error states, in the configured shell", async () => {
+    const appDir = app("app-basic");
+    const result = await compileApp(appDir, {
+      ...configFor(appDir),
+      shell: "PageShell",
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain('<PageShell title={"Trips"}>');
+    expect(views).toContain("</PageShell>");
+    expect(views).not.toContain("<>");
+    // The title stays visible while the page is loading or failed — the shell is the
+    // page, not a wrapper around the happy path only.
+    expect(views).toContain(
+      'if (error) return <PageShell title={"Trips"}><ErrorNotice>{error}</ErrorNotice></PageShell>;',
+    );
+    expect(views).toContain(
+      'if (monthlyTotal.value === null || trips.value === null) return <PageShell title={"Trips"}><Loading /></PageShell>;',
+    );
+  });
+
+  it("still emits a bare fragment for a host that configures no shell", async () => {
+    const appDir = app("app-basic");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain("<>");
+    expect(views).not.toContain("PageShell");
+  });
+
+  it("no longer emits a titles map, because title: now has somewhere to go", async () => {
+    const appDir = app("app-basic");
+    const result = await compileApp(appDir, configFor(appDir));
+    const pages = result.files.find((f) => f.name === "pages.tsx")!.text;
+    expect(pages).not.toContain("titles");
+  });
+
+  it("reports a shell that no catalog exports", async () => {
+    const appDir = app("app-basic");
+    const result = await compileApp(appDir, { ...configFor(appDir), shell: "NoSuchShell" });
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA2001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.message).toContain("NoSuchShell");
+  });
+});
+
+describe("a field bound to a union-typed key", () => {
+  // §8.3: `SelectField`'s `onChange(value: string)` made `(value) => set("vehicle", value)`
+  // infer `string`, which is not assignable to `"car" | "van"` — so the host widened the
+  // action's own input to `string` and lost the guarantee the compiler exists to give.
+
+  it("compiles when the field component is generic in its value type", async () => {
+    const appDir = app("app-union");
+    const result = await compileApp(appDir, {
+      ...withForms(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  it("still rejects an option the union does not contain", async () => {
+    const appDir = app("app-union");
+    edit(appDir, "                  - { value: van, label: Van }", "                  - { value: lorry, label: Lorry }");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.file).toBe(join(appDir, "app.yaml"));
+  });
+
+  it("still rejects a field whose value type is wider than the key's", async () => {
+    // The guarantee, stated as a failing case: a plain `string` picker on a union key is
+    // a compile error at that field's own line, exactly as it was before.
+    const appDir = app("app-union");
+    edit(appDir, "            - ChoiceField:", "            - SelectField:");
+    const result = await compileApp(appDir, withForms(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.file).toBe(join(appDir, "app.yaml"));
+  });
+});
+
+describe("a computed filter default", () => {
+  // §8.4: `default:` took a literal only, so a month filter opened empty rather than on
+  // the current month, and a sentinel like `default: current` would have been an untyped,
+  // host-specific vocabulary growing one entry at a time.
+
+  it("calls the compute function for the filter's starting value", async () => {
+    const appDir = app("app-computed-default");
+    const result = await compileApp(appDir, {
+      ...configFor(appDir),
+      tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+    });
+    expect(result.diagnostics, JSON.stringify(result.diagnostics, null, 2)).toEqual([]);
+    const views = result.files.find((f) => f.name === "views.tsx")!.text;
+    expect(views).toContain('import * as compute from "../compute";');
+    expect(views).toContain('const filters = useFilters({ "month": compute.currentMonth() });');
+    // Not an HTTP endpoint: a compute function is bundled into the client (§6.4).
+    const handlers = result.files.find((f) => f.name === "handlers.ts")!.text;
+    expect(handlers).not.toContain("currentMonth");
+  });
+
+  it("reports a computed default whose type is not the string a filter holds", async () => {
+    const appDir = app("app-computed-default");
+    writeFileSync(
+      join(appDir, "compute.ts"),
+      "export function currentMonth(): number {\n  return 8;\n}\n",
+    );
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA3001");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.file).toBe(join(appDir, "app.yaml"));
+    // The page's own `filters:` block, not the document root and not a generated line.
+    expect(bad!.line).toBe(5);
+  });
+
+  it("reports a compute# name the app does not export", async () => {
+    const appDir = app("app-computed-default");
+    edit(appDir, "compute#currentMonth", "compute#currentMnoth");
+    const result = await compileApp(appDir, configFor(appDir));
+    expect(result.ok).toBe(false);
+    const bad = result.diagnostics.find((d) => d.code === "NOVA2004");
+    expect(bad, JSON.stringify(result.diagnostics, null, 2)).toBeDefined();
+    expect(bad!.hint).toContain("currentMonth");
   });
 });

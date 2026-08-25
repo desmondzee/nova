@@ -80,12 +80,17 @@ export type SectionSpec = {
  * There is deliberately no `type` here. It was required and read by nothing — no
  * widget, no coercion, no validation — so `type: month` and `type: mnoth` behaved
  * identically, and the README's own flagship example advertised month-awareness that
- * did not exist. `default` is likewise an ordinary literal: `default: current` shipped
- * the four-character string "current" to the loader, not the current month. Both are
- * gone rather than half-implemented; a spec that still spells `type:` gets NOVA1001
- * "unknown key" instead of a silent no-op.
+ * did not exist. It is gone rather than half-implemented; a spec that still spells
+ * `type:` gets NOVA1001 "unknown key" instead of a silent no-op.
+ *
+ * `default` is an ordinary prop value: a literal, or a `compute#` binding whose function
+ * is called for the starting value. A binding rather than a sentinel because `current`
+ * and `today` would be an untyped, host-specific vocabulary that only ever grows, while
+ * `compute#currentMonth` reuses the binding machinery, keeps time handling in the app's
+ * own code, and is checked against the `string` a filter holds by TypeScript. Any other
+ * namespace is NOVA1013.
  */
-export type FilterSpec = { name: string; default?: unknown };
+export type FilterSpec = { name: string; default?: PropValue };
 
 export type PageSpec = {
   route: string;

@@ -1,6 +1,7 @@
 import {
   componentKey,
   type FieldSpec,
+  type FilterSpec,
   type PageSpec,
   type PropValue,
   type SectionSpec,
@@ -13,7 +14,22 @@ import { HEADER, appRel, cap, rel, type EmittedFile } from "./types.js";
 const PAGES_TYPE =
   "Record<string, React.ComponentType<{ params: Record<string, string> }>>";
 
-const TITLES_TYPE = "Record<string, string>";
+/**
+ * A filter's starting value: a literal, or the result of calling the `compute#` function
+ * its `default:` names. Stringified because a filter value lives in the query string and
+ * is therefore a `string`; a compute whose return type is not one is a type error at the
+ * `useFilters` call, remapped to the page's own `filters:` block.
+ *
+ * The call is evaluated during render, on the server as well as in the browser — see the
+ * hydration note in the README. Nova never learns what a month is.
+ */
+function filterDefault(filter: FilterSpec): string {
+  const value = filter.default;
+  if (value === undefined) return '""';
+  return value.kind === "literal"
+    ? JSON.stringify(String(value.value ?? ""))
+    : `compute.${value.ref.name}()`;
+}
 
 /**
  * One endpoint's URL as the *client* calls it: `/_data/trips`, behind whatever prefix
@@ -151,28 +167,11 @@ export function emitPages(app: ResolvedApp, config: NovaConfig): EmittedFile {
   });
   e.dedent();
   e.line("};");
-  e.line();
 
-  // `title:` is a page-level fact with no page-level place to render it: nova ships no
-  // components (§2) and `states` names only the loading and error ones, so there is no shell
-  // component to hand it to and inventing one would mean new required config for a
-  // component every consumer would have to write. It is emitted as a map instead —
-  // the same shape, and the same contract, as `pages` and `handlers`: nova emits it,
-  // the host mounts it wherever its own layout puts a title. Always emitted, even when
-  // empty, so the module's exports do not change shape with the spec.
-  e.line(`export const titles: ${TITLES_TYPE} = {`);
-  e.indent();
-  for (const page of app.spec.pages) {
-    if (page.title === undefined) continue;
-    e.line(`${JSON.stringify(page.route)}: ${JSON.stringify(page.title)},`, [
-      "pages",
-      page.route,
-      "title",
-    ]);
-  }
-  e.dedent();
-  e.line("};");
-
+  // There is no `titles` map any more. `title:` used to be emitted as one because nova
+  // had nowhere to render it — and no consuming host ever mounted it, so it was dead
+  // weight in every app. `config.shell` gives the title a real destination, inside the
+  // page, so the map is gone rather than kept as a second, unused way to reach it.
   return { name: "pages.tsx", text: e.text(), map: e.map() };
 }
 
@@ -242,9 +241,11 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     }
     if (pageNeedsFilters(page)) {
       const defaults = page.filters
-        .map((f) => `${JSON.stringify(f.name)}: ${JSON.stringify(String(f.default ?? ""))}`)
+        .map((f) => `${JSON.stringify(f.name)}: ${filterDefault(f)}`)
         .join(", ");
-      e.line(`const filters = useFilters({ ${defaults} });`);
+      // Mapped to the page's own `filters:` block, so a computed default whose type is
+      // not the `string` a filter holds is reported there rather than at a generated line.
+      e.line(`const filters = useFilters({ ${defaults} });`, [...path, "filters"]);
     }
     // §6.2: "Loader inputs are supplied from route params and filter values." A route
     // param and a filter of the same name are the same input; the route param wins,
@@ -302,20 +303,31 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
         formPath,
       );
     }
+    // The shell wraps everything the page can return, loading and error included: a
+    // title and the spacing around it are the page, not decoration on its happy path.
+    // Without a configured shell this is the bare fragment every page emitted before.
+    const open =
+      config.shell === undefined
+        ? "<>"
+        : `<${config.shell}${page.title === undefined ? "" : ` title={${JSON.stringify(page.title)}}`}>`;
+    const close = config.shell === undefined ? "</>" : `</${config.shell}>`;
+    const wrap = (jsx: string) => (config.shell === undefined ? jsx : `${open}${jsx}${close}`);
     if (used.length > 0) {
       const anyError = used.map((n) => `${n}.error`).join(" ?? ");
       const anyValueNull = used.map((n) => `${n}.value === null`).join(" || ");
       e.line(`const error = ${anyError};`);
-      e.line(`if (error) return <${config.states.error}>{error}</${config.states.error}>;`);
-      e.line(`if (${anyValueNull}) return <${config.states.loading} />;`);
+      e.line(
+        `if (error) return ${wrap(`<${config.states.error}>{error}</${config.states.error}>`)};`,
+      );
+      e.line(`if (${anyValueNull}) return ${wrap(`<${config.states.loading} />`)};`);
     }
     e.line("return (");
-    e.indent().line("<>");
+    e.indent().line(open, path);
     e.indent();
     page.sections.forEach((section, i) => {
       emitSection(section, [...path, "sections", i]);
     });
-    e.dedent().line("</>").dedent();
+    e.dedent().line(close).dedent();
     e.line(");");
     e.dedent();
     e.line("}");
@@ -452,7 +464,11 @@ export function hooksUsed(app: ResolvedApp): {
 // `active` state driven straight from a filter, for example). "the page declares
 // filters" alone is not enough — under `noUnusedLocals`, a page with filters that
 // nothing reads (yet) must not declare the local.
-function pageNeedsFilters(page: PageSpec): boolean {
+//
+// Exported because `resolve.ts` asks the same question about a filter's `compute#`
+// default: no local means no call, and no call means the compute module must not be
+// imported either.
+export function pageNeedsFilters(page: PageSpec): boolean {
   return page.filters.length > 0 && (usedLoaders(page.sections).length > 0 || collect(page.sections, "filter").length > 0);
 }
 

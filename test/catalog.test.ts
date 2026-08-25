@@ -17,7 +17,14 @@ describe("readCatalogs", () => {
   it("collects capitalised callable exports and ignores the rest", () => {
     const { catalog, diagnostics } = readCatalogs(config(["../catalog/ui"]), APP);
     expect(diagnostics).toEqual([]);
-    expect(catalog.names()).toEqual(["EmptyState", "ErrorNotice", "Loading", "StatCard", "Table"]);
+    expect(catalog.names()).toEqual([
+      "EmptyState",
+      "ErrorNotice",
+      "Loading",
+      "PageShell",
+      "StatCard",
+      "Table",
+    ]);
   });
 
   it("records the module specifier to emit, not the resolved path", () => {
