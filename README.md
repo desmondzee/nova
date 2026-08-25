@@ -60,10 +60,26 @@ for (const d of result.diagnostics) {
 process.exit(result.ok ? 0 : 1);
 ```
 
+The app directory may be relative (resolved against the process working directory) or
+absolute; both answer identically, and every path in the result — `written`, and each
+diagnostic's `file` — comes back absolute either way. Until 0.2.0 a relative one turned
+the whole typecheck off silently, which is what this example used to demonstrate.
+
 Nova never reads config from disk — you pass the value, so you can keep it in
 whatever form your build already uses. `components`, `states`, `outDir` and
-`tsconfigPath` are all required; `importExtension` is optional and defaults to
-bundler-style resolution (no extension appended to relative imports).
+`tsconfigPath` are all required.
+
+`importExtension` is `"" | ".js"`, optional, and defaults to `""` — bundler-style
+resolution, with no extension appended to relative imports. A host on
+`moduleResolution: "node16"` or `"NodeNext"`, or one running the emitted handlers as
+plain Node ESM, must pass `".js"`; nothing else is accepted.
+
+`outDir` is resolved against the app folder. `"generated"` is the ordinary answer and
+`"src/gen/nova"` is fine; so is a path that escapes the app folder
+(`"../../web/generated/trips"`) and so is an absolute one. The import specifiers back to
+`data.ts`, `actions.ts` and `compute.ts` are computed from the two resolved directories,
+so all four cases emit imports that resolve. Whatever you choose, the emitted files have
+to be inside something your own `tsc` compiles.
 
 `basePath` is optional and defaults to `""`. It is the path your host mounts this
 app's handler map at, and it prefixes the URLs the generated client fetches:
@@ -140,6 +156,51 @@ imports them. A server module that imports a `"use client"` module receives *cli
 references* rather than values, so a route map exported from the client half reads back
 as `{}` — the host matches no route and 404s with nothing to show for it. Mount `pages`
 from `pages.tsx`; nothing needs to import `views.tsx` directly.
+
+## Mounting the output
+
+Two maps, and no framework behind either of them. Nothing below mentions Next: the
+reference consumer is a Next App Router app, but a Vite/React SPA on `node:http` and an
+Express app bundled with esbuild mount the same two maps with about twenty-five lines
+each.
+
+**`pages.tsx` exports the route map.**
+
+```ts
+export const pages: Record<string, React.ComponentType<{ params: Record<string, string> }>>;
+```
+
+Keyed by the route exactly as the spec wrote it, `:name` marking a parameter
+(`"/trip/:id"`). **Nova ships no matcher** — matching a request path against those
+patterns, extracting the parameters and passing them as `params` is the host's job, and
+it is a short loop over `route.split("/")`. A component is an ordinary function
+component; render it however your host renders one.
+
+**`handlers.ts` exports the HTTP map.**
+
+```ts
+export const handlers: Record<
+  string,
+  (req: Request, ctx: { params: Record<string, string> }) => Promise<Response>
+>;
+```
+
+The keys are `"GET /_data/<loader>"` and `"POST /_actions/<action>"` — one per loader and
+per action, method and path in one string, matched against the remainder of the path
+*after* your mount (see `basePath` above). `Request` and `Response` are the Fetch API's,
+not Node's: a `node:http` or Express host converts in both directions, and a Node host
+whose tsconfig has no `lib: ["dom"]` needs `undici-types` (or `@types/node`'s globals) for
+the names.
+
+A loader's input arrives as the URL's search params; an action's is the parsed JSON body.
+Both cross into your typed function through `as never` — see
+[limitations](#limitations).
+
+**`"use client"` is unconditional**, on `views.tsx` and `runtime.tsx`, and there is no
+option to suppress it. In a host with no RSC boundary it is inert: Vite's esbuild
+transform and standalone esbuild both drop module-level directives silently, with no
+warning. The `pages.tsx`/`views.tsx` split costs such a host one extra five-line module
+and nothing else.
 
 A filter is a name and an optional `default`. The value is kept in the query string, so
 a refresh preserves it, and it feeds the input object of every loader on the page.
@@ -349,6 +410,14 @@ page together:
 - FilterBar: { label: Month, value: filters.month, onChange: filters.month.set }
 ```
 
+Both `filters.set` and the sort setter below write the query string with
+`history.replaceState`, keeping `pathname` and the fragment and replacing only the
+search. **Back does not undo a filter or a sort** — `history.length` never moves — which
+is deliberate for a control the reader is sweeping through, and worth knowing if you are
+integrating with a router of your own. The fragment is preserved, so a hash-routed SPA
+keeps its route; `popstate` is listened for, so a Back that arrives from elsewhere is
+picked up.
+
 `sortable:` marks which of a section's columns the reader may sort by. Nova owns the sort
 state and its round trip through the URL — `?sort=` and `?dir=`, beside the filters — and
 hands the component `sort` and `onSort`; ordering the rows is the component's own job.
@@ -357,8 +426,45 @@ hands the component `sort` and `onSort`; ordering the rows is the component's ow
 - Table: { rows: data#trips, columns: [date, km], sortable: [date, km] }
 ```
 
-A page holds one sort state, so a second sortable section is `NOVA1011`. A sortable column
-outside the section's own literal `columns:` list is `NOVA1009`.
+A page holds one sort state, so a second sortable section is `NOVA1011`. A sortable
+column that is not a key of the row type the section's loader returns is a `NOVA3001` at
+the `sortable:` line — checked against the type, so a catalog is free to call its column
+prop `cols`, `headers` or anything else. `NOVA1009` is the same question answered from
+the spec's own text alone, before any type is read, and applies where the section names a
+literal `columns:` list.
+
+### Sorting what the browser does not hold
+
+Ordering the rows is the component's job **as long as the component has all the rows**.
+For a table showing page 2 of 88, sorting the 25 rows on screen is a wrong answer about
+6,480, so sort state has to reach the loader — and it does, on exactly the terms a filter
+value does:
+
+```ts
+// data.ts — the signature is the opt-in.
+export async function deals(input: {
+  region: string;                  // a route param or a filter, as ever
+  page: string;
+  sort: string;                    // the column, "" when nothing is sorted
+  dir: "asc" | "desc";             // "asc" when nothing is sorted
+}): Promise<Deal[]> { … }
+```
+
+A loader whose input names `sort` and/or `dir` is given the page's sort state and is
+re-requested when it changes. A loader that names neither is not, and sorts in the
+browser exactly as before — which is right for a table that holds all its rows.
+
+The declaration lives in the loader's signature rather than in the YAML because that is
+where the fact belongs: the function that has to honour the ordering is the one that
+says it can, and the keys are then checked against the loader's input like every other
+one. A page with a sortable section supplies them; a loader that asks for `sort` on a
+page that has none is the same "missing property" `NOVA3001` as a loader asking for a
+filter the page does not declare.
+
+Because those two names are nova's, a page that declares a filter called `sort` or `dir`
+*and* has a sortable section is `NOVA1014` — two owners for one query parameter, which
+used to compile and then fight itself in the browser. Without a sortable section on the
+page the names are yours.
 
 `refreshes:` names the loaders a successful action invalidates, so the saved row appears
 without a reload:
@@ -398,8 +504,32 @@ not match is a `NOVA3001` on every use, which is a poor way to discover it.
 A field's `name` is both the wiring and an ordinary prop: nova uses it as the key of the
 action's input **and** forwards it, because a field almost always wants it for its
 label's `htmlFor`. That is deliberate, so declare `name: string` on every field
-component. The keys nova consumes and does *not* forward are `initial:`, `confirm:` and
-`refreshes:`.
+component.
+
+### Keys nova reads
+
+Under a section, these keys are spec vocabulary rather than props. The list is
+exhaustive; everything else you write is forwarded.
+
+| Key | Forwarded? | What it means |
+| --- | --- | --- |
+| `submit:` | no | the action this section's form submits — this is what makes it a form |
+| `fields:` | no, **when `submit:` is present** | the form's inputs |
+| `confirm:` | no | the message shown before the one action this section runs |
+| `refreshes:` | no | the loaders a successful action invalidates |
+| `children:` | no | nested sections |
+| `initial:` (on a field) | no | that field's starting value |
+| `sortable:` | **yes** | the sortable columns — wiring *and* a prop the component reads |
+
+`fields:` is the one with a foot in both camps, and it is conditional for that reason: it
+is an ordinary prop name for a read-only component (a roster, a column list), so on a
+section with no `submit:` it is forwarded like anything else and the component's own type
+decides. A form that genuinely forgot its `submit:` is then a `NOVA3001` at that section —
+a field list meeting a prop that is not one — rather than a spec error nova asserts from
+the key's name.
+
+`submit:`, `confirm:`, `refreshes:` and `children:` have no such escape. A component
+wanting a prop by one of those names has to be wrapped, or the prop renamed.
 
 `states.empty` is optional and no generated page renders it. A section knows whether its
 own rows are empty and nova does not, so the empty state belongs to your table — as an
@@ -461,15 +591,56 @@ error.
 
 ## Loader inputs
 
-A loader's input object is assembled from the page's route params and its filter
-values, and is checked against the loader's own declared parameter type. If a loader
-declares `{ month: string; region: string }` and the page supplies neither, that is a
-`NOVA3001` at the spec line that named the loader — not a generated call that fails at
-runtime. Where a route param and a filter share a name, the route param wins.
+A loader's input object is assembled from the page's route params, its filter values and
+(where the loader asks for them) its sort state, and is checked against the loader's own
+declared parameter type. If a loader declares `{ month: string; region: string }` and the
+page supplies neither, that is a `NOVA3001` at the spec line that named the loader — not a
+generated call that fails at runtime. Where a route param and a filter share a name, the
+route param wins.
+
+**A loader is given the keys it declares, and no others.** A loader declaring
+`{ region: string }` on a page with three filters is called with `{ region }` alone, and
+is therefore re-requested when `region` changes and not when the other two do; a loader
+declaring no parameters at all is called with `{}` and is never re-requested by a filter.
+That matters as soon as a page has more than a loader or two: a reporting page with three
+filters and seven loaders used to issue seven requests per filter click, three of them for
+option lists that cannot change.
+
+The narrowing needs a closed set of keys to read. Where the parameter type has none — an
+index signature (`Record<string, string>`), a primitive, a bare type parameter — the whole
+set is passed, as it always was.
+
+Filter values are **always strings**, because they live in the query string. A loader
+that wants a number parses it (`Math.max(1, Number(input.page) || 1)`), and a filter's
+`default:` is written as one (`page: { default: "1" }`). Nova does not coerce.
 
 Generated code is safe under `noUncheckedIndexedAccess`. Filter values are keyed by
 the filter names the page declares rather than by an open index signature, and each
 route param a page reads is narrowed into a local once at the top of the page function.
+
+### Reading a dataset too big to send
+
+Nothing here is new vocabulary; it is the three pieces above in the arrangement a report
+wants, written down because every consumer has had to invent it.
+
+**Pagination** is a filter and a second loader: `page: { default: "1" }` feeds the rows
+loader, and a `pageCount` loader declaring the same scope feeds the pager. Both are
+ordinary loaders; the filter setter (`filters.page.set`) is what the pager calls.
+
+**Sorting** such a table means declaring `sort` and `dir` in the rows loader's input —
+see [sorting what the browser does not hold](#sorting-what-the-browser-does-not-hold).
+
+**Export** — CSV, PDF, anything that is not JSON — is a route you write. Generated
+handlers answer `Response.json` only, and a spec that could describe a file format would
+be a reporting engine rather than a UI compiler. The spec's contribution is handing the
+filter values to a component that builds the URL:
+
+```yaml
+- CsvLink: { endpoint: /reports/export.csv, scope: filters.region, span: filters.quarter }
+```
+
+which means the export sees exactly the filters that component was handed, and nothing
+about the sort unless you pass that too.
 
 ## Diagnostics
 
@@ -478,7 +649,10 @@ Codes are stable.
 - `NOVA1xxx` — a problem in the spec file itself (YAML syntax, schema shape,
   unknown or missing keys). `NOVA1007` is a `confirm:` or `refreshes:` with other
   than exactly one action to attach to; `NOVA1008` two fields editing the same key;
-  `NOVA1009` a sortable column the section's own `columns:` list does not have;
+  `NOVA1009` a sortable column the section's own literal `columns:` list does not
+  have — the spec-text half of that check, which needs no type information and so
+  belongs in this block; the type-derived half, against the row type the section's
+  loader returns, is a `NOVA3001`;
   `NOVA1010` one page binding the same action in two ways nova cannot reconcile
   (two different `confirm:` messages or `refreshes:` lists, or two forms on one
   action); `NOVA1011` more than one sortable section on a page; `NOVA1012` a
@@ -488,12 +662,18 @@ Codes are stable.
   `NOVA1013` a filter `default:` bound to a namespace other than `compute#` — the
   next free number after it, and in this block for the same reason: whether
   `data#trips` may be a default is answered by the spec's own text, before any
-  catalog is read.
+  catalog is read; `NOVA1014` a page declaring a filter named `sort` or `dir`
+  while also having a sortable section — the next free number in the block, and
+  in it because the collision is between two names the spec itself writes, `?sort=`
+  and `?dir=` being nova's own two query parameters.
 - `NOVA2xxx` — name resolution: an unknown component, a missing catalog
   module, a `data.ts`/`actions.ts`/`compute.ts` export that doesn't exist, a
   filter/route parameter reference that doesn't match its page, or one name
-  bound to two different things (`NOVA2009` — two components, or a loader and
-  an action sharing a name). `NOVA2012` is a field component asking for more
+  bound to two different things — `NOVA2009` where the spec binds one name two
+  ways (a component name bound to two modules, or a loader and an action sharing
+  a name), and `NOVA2010` where two *catalog modules* both export a component of
+  the same name, which is a fact about `components:` rather than about the spec.
+  `NOVA2012` is a field component asking for more
   than one type argument — the next free number in the block, and in this
   block because it is answered by reading the catalog export's own type
   parameters, before anything is emitted. Nova has exactly one type argument
@@ -509,6 +689,45 @@ Codes are stable.
   your spec.
 
 ## Breaking changes
+
+### Since 0.1.0 — what two foreign consumers found
+
+Eight fixes from building a Vite/React SPA and an Express reporting app against this
+README alone. Three of them can turn a build that passed into one that reports, and the
+first can do so dramatically.
+
+- **A relative `appDir` no longer disables the typecheck.** `typecheckEmitted` keyed its
+  file map on a path built from `appDir`, and TypeScript reports every file name
+  absolute, so with a relative `appDir` the map matched nothing and *every*
+  `NOVA3001`/`NOVA3002` was discarded — `ok: true` on output that does not compile. This
+  README's own example passed a relative path. **What a host must do:** expect real
+  diagnostics on the first build after upgrading if your build script passed one. They
+  were always there.
+- **A sortable column is checked against the row type.** Previously only against a
+  literal `columns:` prop, so a catalog spelling it anything else got no check at all.
+  **What a host must do:** a `sortable:` entry has to be a key of the row type the
+  section's loader returns, or it is a `NOVA3001` at that line. Sections binding two
+  loaders, and loaders that do not return a list of objects, are unchecked as before.
+- **A filter named `sort` or `dir` beside a sortable section is `NOVA1014`.** Both wrote
+  the same query parameter; it compiled and then fought itself.
+- **A loader is called with the keys its own input declares.** A parameterless loader now
+  gets `{}` instead of the page's whole filter set. The request URLs change and there are
+  far fewer of them; nothing about a loader's signature changes.
+- **Sort state reaches a loader that declares `sort`/`dir`** — see
+  [sorting what the browser does not hold](#sorting-what-the-browser-does-not-hold). A
+  loader that declares neither is untouched.
+- **`fields:` on a section with no `submit:` is an ordinary prop**, not `NOVA1002`. This
+  only removes an error.
+- **Filter and sort writes keep `location.hash`.** A hash-routed SPA lost its route on
+  every filter change.
+- **`outDir` may escape the app folder or be absolute.** The specifier back to `data.ts`
+  was computed relative to `process.cwd()`; it is computed from the two resolved
+  directories now, so those two cases emit imports that resolve instead of ones that do
+  not.
+
+The emitted `views.tsx` also hoists `const sortState = useSort()` above the loaders
+rather than below them, since a loader may now read it. Output stays byte-deterministic;
+it is simply not byte-identical to 0.1.0's.
 
 ### Since 0.1.0 — a page that fails one part at a time
 
@@ -653,6 +872,14 @@ for `note?: string` is `string | undefined`, so a field component declaring
 is named after its action, so one page cannot hold two forms on the same action
 (`NOVA1010`). Neither is a limit of the URL or of React — both are places where
 nova reports rather than guesses.
+
+**A refetch shows the previous answer, with nothing saying so.** `useLoader` keeps its
+last value while re-requesting, and no generated page reads the `loading` flag, so
+changing a filter leaves each affected section showing the old numbers until the new ones
+land. That is the right trade for one table — it avoids a flash of spinner on every
+keystroke — and a thinner one for a page of six, where several sections are briefly
+wrong together. A component that wants to say so has to be told by something the spec
+does not yet express.
 
 **Loading is inferred from `value === null`, not from `state.loading`.** A
 section shows the loading component while any loader it binds has a null value.
