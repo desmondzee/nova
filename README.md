@@ -26,9 +26,20 @@ roughly three apps sharing a shape the arithmetic inverts, because a single app 
 its own for its spec, its `data.ts`/`actions.ts` split, its committed `generated/`
 output, and every catalog component it has to write and cannot share.
 
-- **Worth it** for three or more internal tools, admin panels, reporting screens or
-  entry forms that are the same shape with different rules.
-- **Not worth it** for one complex screen. It will cost more than it saves.
+Read those numbers carefully, because the first app in a group pays for the catalog the
+rest of the group reuses. The entry-form group is the only one where a *second* app was
+converted, and it cost 32% less than the original while adding 86 lines to the catalog —
+against 969 for the first. The other three groups are one conversion each, so their
+figures are first-app figures, and no sibling was ever measured to see whether the same
+inversion follows.
+
+- **Worth it** where a group of apps genuinely share a catalog and you will convert
+  several — internal tools, admin panels, reporting screens or entry forms that are the
+  same shape with different rules. The measured payoff arrived at the second app.
+- **Not worth it** for one screen, however complex. It will cost more than it saves, and
+  the table above is what one-app-per-group looks like.
+- **Unmeasured** below a dozen apps sharing a shape. The break-even point is somewhere
+  between the second app and the fourteenth; nothing here pins it more precisely.
 
 ## What it is, and is not
 
