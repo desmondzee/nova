@@ -460,6 +460,32 @@ describe("§6.2 a loader carries its own status to the client", () => {
     return mod.handlers;
   }
 
+  it("hands a loader exactly the query string, with a repeated key resolving last-one-wins", async () => {
+    // The emitted `query` helper builds this object with `URLSearchParams.forEach`,
+    // because `entries()` is not in `lib.dom` without `DOM.Iterable` (see host.test.ts).
+    // What it must not change is what the loader is handed: same keys, same values, and
+    // the same last-one-wins that `Object.fromEntries` gave a parameter written twice.
+    const appDir = app("app-sections");
+    const result = await compileApp(appDir, configFor(appDir));
+    const seen: unknown[] = [];
+    const handlers = handlersOf(fileOf(result.files, "handlers.ts"), {
+      trips: async (input: unknown) => {
+        seen.push(input);
+        return [];
+      },
+      monthlyTotal: async () => "",
+      policy: async () => "",
+    });
+    await handlers["GET /_data/trips"]!(
+      new Request("http://h/_data/trips?month=2026-08&region=north&month=2026-09&empty="),
+      { params: {} },
+    );
+    expect(seen).toEqual([{ month: "2026-09", region: "north", empty: "" }]);
+
+    await handlers["GET /_data/trips"]!(new Request("http://h/_data/trips"), { params: {} });
+    expect(seen[1]).toEqual({});
+  });
+
   it("answers a loader's own status, so a not-found reads as not-found", async () => {
     const appDir = app("app-sections");
     const result = await compileApp(appDir, configFor(appDir));

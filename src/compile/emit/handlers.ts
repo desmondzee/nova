@@ -39,6 +39,41 @@ const PRELUDE = [
   "}",
 ];
 
+/**
+ * The query string as the plain object a parameterised loader is called with.
+ *
+ * `forEach` rather than `Object.fromEntries(…searchParams.entries())`, and that is not a
+ * style choice. `URLSearchParams.entries()` is declared in `lib.dom.iterable.d.ts` and
+ * **not** in `lib.dom.d.ts`, so a host on `lib: ["ES2022", "DOM"]` with no `@types/node`
+ * — an ordinary tsconfig for a browser-targeting app, and one nova's peer range says
+ * nothing about — could not compile this file. What it got was nova's own typecheck
+ * reporting `TS2339: Property 'entries' does not exist on type 'URLSearchParams'` as a
+ * `NOVA3002` against generated code, hinted "likely a nova bug", with a correct spec and
+ * a legal config and nothing to change. `forEach` is in plain `lib.dom` and asks for
+ * nothing further.
+ *
+ * Same object either way: the same keys in the same order, and the same last-one-wins for
+ * a parameter that appears twice.
+ *
+ * A helper rather than an expression inlined per route, because the alternative that
+ * keeps one line per entry is an immediately-invoked block, and the route map is worth
+ * more as a readable table than this is as eight fewer lines. Emitted only where a loader
+ * declares parameters — a zero-parameter loader takes no `req` at all, and a helper
+ * nothing calls fails a host with `noUnusedLocals`.
+ */
+const QUERY = [
+  "",
+  "/** The request's query string, as the object a loader is called with. `forEach`, not",
+  " *  `entries()`: only the former is in lib.dom without DOM.Iterable. */",
+  "const query = (req: Request): Record<string, string> => {",
+  "  const out: Record<string, string> = {};",
+  "  new URL(req.url).searchParams.forEach((value, key) => {",
+  "    out[key] = value;",
+  "  });",
+  "  return out;",
+  "};",
+];
+
 const PARSE_BODY = [
   "",
   "/** The request's JSON body. A body that is not JSON is the caller's 400, not a 500. */",
@@ -62,8 +97,12 @@ export function emitHandlers(app: ResolvedApp, config: NovaConfig): EmittedFile 
   if (app.loaders.length > 0) e.line(`import * as data from "${appRel(app, config, "data")}";`);
   if (app.actions.length > 0) e.line(`import * as actions from "${appRel(app, config, "actions")}";`);
   e.line();
+  // A loader that declares no parameters is called with no argument, so an app whose
+  // loaders all do needs no `query` at all — see QUERY.
+  const needsQuery = app.loaders.some((name) => app.loaderArity[name] !== 0);
   if (app.loaders.length > 0 || app.actions.length > 0) {
     e.lines(PRELUDE);
+    if (needsQuery) e.lines(QUERY);
     if (app.actions.length > 0) e.lines(PARSE_BODY);
     e.line();
   }
@@ -84,7 +123,7 @@ export function emitHandlers(app: ResolvedApp, config: NovaConfig): EmittedFile 
     e.line(
       app.loaderArity[name] === 0
         ? `"GET /_data/${name}": async (): Promise<Response> => respond(() => data.${name}()),`
-        : `"GET /_data/${name}": async (req: Request): Promise<Response> => respond(() => data.${name}(Object.fromEntries(new URL(req.url).searchParams.entries()) as never)),`,
+        : `"GET /_data/${name}": async (req: Request): Promise<Response> => respond(() => data.${name}(query(req) as never)),`,
     );
   }
   for (const name of app.actions) {

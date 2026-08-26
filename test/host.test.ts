@@ -27,6 +27,7 @@ function app(name: string): string {
   cpSync(join(fixturesDir, name), join(root, name), { recursive: true });
   cpSync(join(fixturesDir, "tsconfig.json"), join(root, "tsconfig.json"));
   cpSync(join(fixturesDir, "tsconfig.strict.json"), join(root, "tsconfig.strict.json"));
+  cpSync(join(fixturesDir, "tsconfig.domlib.json"), join(root, "tsconfig.domlib.json"));
   cpSync(join(fixturesDir, "catalog"), join(root, "catalog"), { recursive: true });
   return join(root, name);
 }
@@ -44,6 +45,18 @@ const configFor = (appDir: string): NovaConfig => ({
 const strict = (appDir: string): NovaConfig => ({
   ...configFor(appDir),
   tsconfigPath: join(appDir, "..", "tsconfig.strict.json"),
+});
+
+/**
+ * The same config against a host whose `lib` is `["ES2022", "DOM"]` with no
+ * `@types/node` — and with `types`/`typeRoots` pinned empty so TypeScript's automatic
+ * `@types` walk cannot reach this repository's own `node_modules/@types/node` from a
+ * fixture nested inside it. That walk is why every other tsconfig here has always
+ * appeared to pass on this configuration.
+ */
+const domLib = (appDir: string): NovaConfig => ({
+  ...configFor(appDir),
+  tsconfigPath: join(appDir, "..", "tsconfig.domlib.json"),
 });
 
 const fileOf = (files: { name: string; text: string }[], name: string) =>
@@ -287,3 +300,57 @@ function evaluateModule(source: string, load: (specifier: string) => unknown): u
   new Function("exports", "require", js)(exports, load);
   return exports;
 }
+
+/**
+ * `lib: ["ES2022", "DOM"]` with no `@types/node` is an ordinary tsconfig for a
+ * browser-targeting app, and emitted code has to compile under it.
+ *
+ * `URLSearchParams.entries()` is declared in `lib.dom.iterable.d.ts` and *not* in
+ * `lib.dom.d.ts`, so a `handlers.ts` that reached for it met `TS2339: Property 'entries'
+ * does not exist on type 'URLSearchParams'` — which nova then reported against the host
+ * as `NOVA3002`, hinted "likely a nova bug", with nothing in the spec to change. The spec
+ * was right, the host config was legal, and nova was the one at fault.
+ *
+ * This did not show up here for a long time because TypeScript's automatic `@types`
+ * inclusion walks *ancestor* directories: a fixture under `test/fixtures/` finds this
+ * repository's `node_modules/@types/node`, whose `URLSearchParams` does declare
+ * `entries()`. `tsconfig.domlib.json` pins `types` and `typeRoots` empty so the walk
+ * cannot rescue it.
+ */
+describe("emitted output under a host with lib DOM but not DOM.Iterable", () => {
+  it("compiles clean, with no @types/node to fall back on", async () => {
+    const appDir = app("app-basic");
+    const result = await compileApp(appDir, domLib(appDir));
+    expect(result.diagnostics).toEqual([]);
+    expect(result.ok).toBe(true);
+  });
+
+  // Between them these two exercise all five runtime hooks and every emitted file, so
+  // this is the sweep for the class as well as the regression for the one instance.
+  it.each(["app-form", "app-sortable-rows"])(
+    "reaches for no web iterator anywhere in the six files it emits for %s",
+    async (fixture) => {
+      const appDir = app(fixture);
+      const result = await compileApp(appDir, domLib(appDir));
+      expect(result.diagnostics).toEqual([]);
+      // The spellings that would pull `DOM.Iterable` back in. `forEach` is in plain
+      // `lib.dom`; `entries`/`keys`/`values` on a web collection, and spreading or
+      // `for...of`-ing one, are not.
+      for (const f of result.files) {
+        expect(f.text).not.toMatch(/\.(entries|keys|values)\(\)/);
+        expect(f.text).not.toMatch(/\[\.\.\.[\w.]*(searchParams|headers|formData)/);
+        expect(f.text).not.toMatch(/of [\w.]*(searchParams|headers|formData)/);
+      }
+    },
+  );
+
+  it("emits no query helper for an app whose loaders declare no input", async () => {
+    // `noUnusedLocals` is on in that tsconfig, so a helper emitted where nothing calls it
+    // is a build failure rather than a wasted line — the same rule every other emitted
+    // hook and import is chosen by.
+    const appDir = app("app-zeroparam");
+    const result = await compileApp(appDir, domLib(appDir));
+    expect(result.diagnostics).toEqual([]);
+    expect(fileOf(result.files, "handlers.ts")).not.toContain("searchParams");
+  });
+});

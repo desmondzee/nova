@@ -66,6 +66,13 @@ unpublished 0.1.0, this is what nova used to do differently.
 - **`useAction` and `useLoader` show the refusal the code wrote**, instead of discarding a
   non-2xx body and reporting the bare status line.
 - **A JSON body that parses to a non-object is a 400**, not a 500.
+- **Emitted code compiles under `lib: ["ES2022", "DOM"]` with no `@types/node`.** A loader
+  handler built its input with `Object.fromEntries(…searchParams.entries())`, and
+  `URLSearchParams.entries()` is declared in `lib.dom.iterable.d.ts` and not in
+  `lib.dom.d.ts` — so an ordinary browser-targeting tsconfig met `TS2339`, which nova
+  reported against its own output as a `NOVA3002` hinted "likely a nova bug". It uses
+  `URLSearchParams.forEach`, which is in plain `lib.dom`. Same object, same keys, same
+  last-one-wins for a repeated parameter.
 - **Filter and sort writes keep `location.hash`.** A hash-routed SPA lost its route on
   every filter change.
 - **`outDir` may escape the app folder or be absolute.** The specifier back to `data.ts`

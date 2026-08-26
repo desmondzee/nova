@@ -233,10 +233,17 @@ apps/orders/
 ```
 
 `app.yaml`, `data.ts`, `actions.ts` and `compute.ts` are exact, lowercase names, and the
-lowercase part is checked rather than assumed. macOS and Windows fold filename case, so a
-`Data.ts` resolves there and nova would emit `from "../data"` — a specifier that does not
-exist on Linux, discovered by CI inside generated code you did not write. Nova compares
-the name on disk against the name it expects and reports `NOVA2015` instead of emitting.
+lowercase part is checked rather than assumed. A case-folding filesystem — macOS, and
+Windows, though only macOS has been tested — resolves a `Data.ts` for `data.ts`, and nova
+would then emit `from "../data"`: a specifier that does not exist on a case-sensitive
+filesystem, discovered by CI inside generated code you did not write. Nova compares the
+name on disk against the name it expects and reports `NOVA2015` instead of emitting.
+
+On a case-sensitive filesystem the misnamed file simply does not resolve, so nova never
+sees it and the same mistake surfaces as `NOVA2002` — "data.ts has no export 'orders'" —
+about a file that is sitting there declaring exactly that. Nothing is written either way,
+which is the part that matters; only the sentence is worse. If a `NOVA2002` names an
+export you can plainly see, check the filename's case first.
 
 `pages.tsx` and `views.tsx` are one module split in two, and the split is load-bearing
 under React Server Components. `views.tsx` carries `"use client"` and exports one
@@ -306,7 +313,8 @@ per action, method and path in one string, matched against the remainder of the 
 *after* your mount (see `basePath` above). `Request` and `Response` are the Fetch API's,
 not Node's: a `node:http` or Express host converts in both directions, and a Node host
 whose tsconfig has no `lib: ["DOM"]` needs `undici-types` (or `@types/node`'s globals) for
-the names.
+the names. Plain `"DOM"` is enough — nothing emitted needs `"DOM.Iterable"`, and that is
+pinned by a test rather than left to hold by accident.
 
 A loader's input arrives as the URL's search params; an action's is the parsed JSON body.
 Both cross into your typed function through `as never` — see
@@ -829,7 +837,7 @@ Codes are stable; message wording is not. Assert on `code`.
   | `NOVA2012` | a field component needing more than one type argument; nova has exactly one to give (the type of the input key it edits), and a parameter left to inference is a parameter whose constraints may silently stop applying |
   | `NOVA2013` | a resolved `typescript` that does not provide the compiler API nova drives — a TypeScript 7 pulled in past the peer range, or a linked or aliased copy a range cannot reach. It names the version and the missing entry points |
   | `NOVA2014` | a `NovaConfig` field that is missing or of the wrong type. Every field is checked before it is used and every problem is reported in one run |
-  | `NOVA2015` | an app module whose filename differs in case from `data.ts`, `actions.ts` or `compute.ts` — the one kind of resolution a case-insensitive filesystem answers `yes` to and a case-sensitive one does not |
+  | `NOVA2015` | an app module whose filename differs in case from `data.ts`, `actions.ts` or `compute.ts` — the one kind of resolution a case-folding filesystem answers `yes` to and a case-sensitive one does not. Only a case-folding filesystem can report it; on a case-sensitive one the same mistake is a `NOVA2002` (see [what an app looks like](#what-an-app-looks-like)) |
   | `NOVA2016` | a file at one of the six output names that nova did not write, answered at the moment the write would have destroyed it |
   | `NOVA2017` | a loader input key whose declared type a string can never be: the generated handler can only ever pass strings, so the loader's own signature is what disagrees |
 
