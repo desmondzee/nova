@@ -52,7 +52,7 @@ export type NovaConfig = {
   columnProps?: string[];
   /**
    * Prefix for the loader and action URLs the generated client fetches — the path the
-   * host mounts this app's handler map at, e.g. "/api/apps/trips". Defaults to "", which
+   * host mounts this app's handler map at, e.g. "/api/apps/orders". Defaults to "", which
    * keeps the origin-relative "/_data/x" and "/_actions/x" a site-root host expects.
    * Handler map keys are relative to the mount and are unaffected by it.
    */

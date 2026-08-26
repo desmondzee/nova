@@ -41,7 +41,7 @@ export type SectionSpec = {
   props: Record<string, PropValue>;
   children: SectionSpec[];
   /**
-   * `submit: actions#saveTrip` — the action this section's form submits. Present iff the
+   * `submit: actions#saveOrder` — the action this section's form submits. Present iff the
    * section is a form, which is what makes `fields:` meaningful and what makes nova
    * supply `onSubmit`, `busy` and `error`.
    */
@@ -49,21 +49,21 @@ export type SectionSpec = {
   /** The form's fields. Only meaningful alongside `submit`. */
   fields?: FieldSpec[];
   /**
-   * `sortable: [date, km]` — the columns this section lets the reader sort by. Wiring
+   * `sortable: [date, total]` — the columns this section lets the reader sort by. Wiring
    * *and* an ordinary prop: nova supplies `sort` and `onSort` from the page's sort
    * state, and forwards the list itself so the component knows which headers to make
    * clickable. Ordering the rows stays the component's business (D3).
    */
   sortable?: string[];
   /**
-   * `confirm: "Delete this trip?"` — the message a generated page shows before running
+   * `confirm: "Delete this order?"` — the message a generated page shows before running
    * the one action this section binds. Consumed by nova (it becomes `useAction`'s /
    * `useForm`'s `opts.confirm`) rather than forwarded as a prop, since a host component
    * that renders a delete button has no reason to declare a `confirm` prop of its own.
    */
   confirm?: string;
   /**
-   * `refreshes: [trips]` — the page's loaders to re-read once the one action this section
+   * `refreshes: [orders]` — the page's loaders to re-read once the one action this section
    * runs has succeeded. Consumed by nova (it becomes the `refresh` callback on
    * `useAction`/`useForm`, which calls `reload()` on each named loader) rather than
    * forwarded, exactly as `confirm:` is. Deliberately the whole vocabulary: naming the

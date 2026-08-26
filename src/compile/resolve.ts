@@ -214,7 +214,7 @@ export function resolveApp(
 
   // Diagnosed, not accommodated. Nova could emit `from "../Data"` and be correct
   // everywhere, but the three module names are the spec's own vocabulary — the README
-  // documents `data.ts`, `actions.ts` and `compute.ts` by name, and `data#trips` is
+  // documents `data.ts`, `actions.ts` and `compute.ts` by name, and `data#orders` is
   // written against that name — so a `Data.ts` that only works because the developer's
   // filesystem folds case is a spelling nova should not silently adopt into an app that
   // two other people will check out. Renaming the file is one command and leaves one

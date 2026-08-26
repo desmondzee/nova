@@ -12,7 +12,7 @@ const HANDLERS_TYPE =
  *
  * `respond` looks for a numeric `status` on whatever was thrown. That is the whole
  * vocabulary — a loader that wants a stale link to read as a stale link throws
- * `Object.assign(new Error("This trip no longer exists."), { status: 404 })` — and
+ * `Object.assign(new Error("This order no longer exists."), { status: 404 })` — and
  * anything else is re-thrown **unchanged**, so a genuine fault still reaches the host's
  * own error handling, its logging and whatever it maps a storage outage to. Turning
  * every exception into a Response here would silently take that away.

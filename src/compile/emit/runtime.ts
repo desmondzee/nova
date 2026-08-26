@@ -21,7 +21,7 @@ import { HEADER, type EmittedFile } from "./types.js";
  *
  * The `!r.ok` branch reads the response body before it throws, and must keep doing so:
  * the handler answers `{ ok: false, error }` for a thrown error carrying a status, and
- * discarding that body is what turned `This trip no longer exists.` into
+ * discarding that body is what turned `This order no longer exists.` into
  * `500 Internal Server Error`. The status line is only the fallback.
  */
 const USE_LOADER = [

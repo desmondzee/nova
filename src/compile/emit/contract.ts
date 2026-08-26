@@ -33,8 +33,8 @@ const ROW_OF =
 const DEFAULT_COLUMN_PROPS = ["columns", "numeric"];
 
 /**
- * The type expression for the value one section reads from a loader — `Travel["days"]`
- * for `rows: data#travel.days`, `Trips` for `rows: data#trips`.
+ * The type expression for the value one section reads from a loader — `Order["lines"]`
+ * for `rows: data#order.lines`, `Orders` for `rows: data#orders`.
  *
  * Only its own props count (not its children's, not its fields'), and only where they
  * name exactly one such value: with two, there is no single row type the columns belong
@@ -92,8 +92,8 @@ function columnLists(
 // pages.tsx's JSX, which is always one of the emitted, typechecked files.
 //
 // That is also why there is no *action* binding here any more. It was
-// `const _saveTrip: SaveTrip = actions.saveTrip` where `SaveTrip` is
-// `typeof actions.saveTrip` — an expression assigned to its own type, which no
+// `const _saveOrder: SaveOrder = actions.saveOrder` where `SaveOrder` is
+// `typeof actions.saveOrder` — an expression assigned to its own type, which no
 // assignability rule can reject. A loader's binding restates its shape
 // (`(input: …) => Promise<…>`) and so can fail; an action's restated nothing, and cost
 // two lines per action, an import of `actions`, and a `${Cap}` alias, in every app.

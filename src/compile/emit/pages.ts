@@ -32,7 +32,7 @@ function filterDefault(filter: FilterSpec): string {
 }
 
 /**
- * One endpoint's URL as the *client* calls it: `/_data/trips`, behind whatever prefix
+ * One endpoint's URL as the *client* calls it: `/_data/orders`, behind whatever prefix
  * the host mounts this app's handler map at.
  *
  * `handlers.ts`'s keys deliberately do not move with it. They are relative to the mount
@@ -348,7 +348,7 @@ export function emitViews(app: ResolvedApp, config: NovaConfig): EmittedFile {
     // Both type arguments are what make an action bound to an ordinary prop checked.
     // `run` was declared `(input: unknown) => Promise<boolean>`, and an `unknown`
     // parameter is assignable to every callback shape there is — so `onDelete={
-    // deleteTripAction.run}` type-checked against `(row: Trip) => void` whatever the
+    // deleteOrderAction.run}` type-checked against `(row: Order) => void` whatever the
     // action actually accepted. With the action's own input type it is the ordinary
     // contravariant check, reported at the spec line that bound it.
     //
