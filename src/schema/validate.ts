@@ -268,7 +268,7 @@ export function validate(
 
     // `refreshes:` names loaders, and the only loaders a generated page holds are the
     // ones its own sections bind. A name that is not one of them would emit
-    // `tirps.reload()` against a local that was never declared — a nova bug wearing a
+    // `odrers.reload()` against a local that was never declared — a nova bug wearing a
     // spec error's clothes — so it is reported here, at the line that named it.
     const loaded = new Set<string>();
     for (const { section } of placed) {

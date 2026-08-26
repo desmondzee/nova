@@ -42,11 +42,18 @@ pagination or retries, or render documents.
 It is not runtime-free in the sense that phrase usually carries. There *is* a runtime —
 fetching, race-guarding, query-string round-tripping, confirmation and form state — and
 nova **vendors a copy of it into every app** as `generated/runtime.tsx`. Only the hooks
-an app actually uses are emitted: about 50 lines for a loaders-only app, around 190 for
-one using loaders, filters, sorting and a form, and 5 for a spec that binds nothing.
-Nothing links back to nova, so nothing of nova's is in your `package.json` or your
-bundle; the cost is that a fix to that runtime is one regenerated file per app rather
-than one version bump. See [limitations](#limitations).
+an app actually uses are emitted: 50 lines for a loaders-only app, 190 for one using
+loaders, filters and a form, around 230 with sorting as well, and 4 for a spec that binds
+nothing. Nothing links back to nova, so nothing of nova's is in your `package.json` or
+your bundle; the cost is that a fix to that runtime is one regenerated file per app
+rather than one version bump. See [limitations](#limitations).
+
+The vocabulary, once, because everything below uses it: a **spec** (`app.yaml`) declares
+**pages**; a page holds **sections**, and a section names a component, gives it props, and
+may nest more sections under `children:`. Data comes from **loaders** in `data.ts` and
+mutations from **actions** in `actions.ts`, both ordinary typed functions you write. Every
+component a spec names comes from a **catalog** — a module listed in the `components`
+config. [What an app looks like](#what-an-app-looks-like) shows all of it at once.
 
 ## Install
 
@@ -100,8 +107,9 @@ const result = await compileApp("apps/orders", {
 
 for (const d of result.diagnostics) {
   console.error(`${d.file}:${d.line}:${d.col} ${d.code} ${d.message}`);
-  // Print these too. `hint` is where "did you mean 'Table'?" lives, and `related` is
-  // where the other end of a collision is named.
+  // Print these too. `hint` is where "did you mean 'Table'?" lives; `related` is the
+  // other positions a diagnostic points at — the generated line behind a NOVA3001, or
+  // the two declarations behind a name collision.
   if (d.hint !== undefined) console.error(`  ${d.hint}`);
   for (const r of d.related ?? []) console.error(`  ${r.file}:${r.line}:${r.col} ${r.message}`);
 }
@@ -129,7 +137,8 @@ checks nothing for a build script written in JavaScript or a config read from JS
 missing or wrong-typed field is `NOVA2014` naming the field, with every problem in one
 run rather than a `TypeError` out of whichever stage first touched it.
 
-**`components`** — module specifiers whose capitalised, callable exports a spec may name.
+**`components`** — the catalogs: module specifiers whose capitalised, callable exports a
+spec may name.
 
 **`states`** — `{ loading, error }` are required and `empty` is optional; see
 [what nova renders itself](#what-nova-renders-itself).
@@ -219,6 +228,7 @@ apps/orders/
 ├── app.yaml       the spec
 ├── data.ts        typed async loaders
 ├── actions.ts     typed mutations
+├── compute.ts     plain functions a spec may call (optional)
 └── generated/     emitted: pages.tsx, views.tsx, handlers.ts, types.ts, runtime.tsx, __contract.ts
 ```
 
@@ -463,7 +473,7 @@ prop type. See [limitations](#limitations).
 or through an ordinary prop binding:
 
 ```yaml
-- DeleteButton: { label: Delete, onSubmit: actions#deleteOrder, confirm: Delete this order? }
+- DeleteButton: { label: Delete, onDelete: actions#deleteOrder, confirm: Delete this order? }
 ```
 
 It is consumed by nova rather than forwarded, so a delete button needs no `confirm` prop of
@@ -814,7 +824,7 @@ Codes are stable; message wording is not. Assert on `code`.
   | `NOVA2007` | a local component module (`./views/charts#Chart`) that cannot be resolved |
   | `NOVA2008` | a local module with no component export of that name |
   | `NOVA2009` | the spec binds one name two ways — a component name bound to two modules, or a loader and an action sharing a name |
-  | `NOVA2010` | two *catalog modules* both export a component of that name — a fact about `components:` rather than about the spec |
+  | `NOVA2010` | two *catalogs* both export a component of that name — a fact about `components:` rather than about the spec, so it is reported at the top of `app.yaml` with both declarations in `related` |
   | `NOVA2011` | a `tsconfigPath` that does not parse |
   | `NOVA2012` | a field component needing more than one type argument; nova has exactly one to give (the type of the input key it edits), and a parameter left to inference is a parameter whose constraints may silently stop applying |
   | `NOVA2013` | a resolved `typescript` that does not provide the compiler API nova drives — a TypeScript 7 pulled in past the peer range, or a linked or aliased copy a range cannot reach. It names the version and the missing entry points |

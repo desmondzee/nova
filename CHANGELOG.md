@@ -85,8 +85,9 @@ unpublished 0.1.0, this is what nova used to do differently.
 ### Emitted-output size
 
 A leanness pass over what nova emits, on the arithmetic that a line in nova's source costs
-once and a line in `generated/` costs once per app. Across four converted apps `generated/`
-went from 511, 479, 388 and 199 lines to 393, 374, 323 and 169 — between 15% and 23% each.
+once and a line in `generated/` costs once per app. Across the four apps that carried a
+spec when it was measured, `generated/` went from 511, 479, 388 and 199 lines to 393, 374,
+323 and 169 — between 15% and 23% each.
 
 - `pages.tsx` no longer exports a `titles` map; `shell` is where a page's `title:` goes.
 - `types.ts` no longer exports `${Cap}` for an action bound only by a form's `submit:`.
