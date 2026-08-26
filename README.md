@@ -6,25 +6,25 @@ React pages and HTTP handlers, typechecked by your own TypeScript.
 ## Does this fit your problem?
 
 Nova compresses **repetition across a family of near-identical apps** — the same screen
-with a different rate table and a different set of rules. It does not compress UI in
+with a different lookup table and a different set of rules. It does not compress UI in
 general. The agent of compression is a shared component catalog; the compiler's
 contribution is consistency — filters in the URL, race guards, per-section degradation,
 one dispatch layer — rather than volume.
 
-Four app families were converted and each conversion compared against the original it
-replaced:
+Five production apps were converted and each compared against the original it replaced,
+across four groups of differing shape:
 
-| Family | Apps | Line delta |
+| Group | Apps sharing the shape | Line delta |
 | --- | ---: | ---: |
-| mileage / per-diem | 14 | **−23%** and **−32%** |
-| reporting | ~8 | +10% |
-| payroll | 7 | +19% |
-| one-off complex screens | ~9 | +6%, and 89% of it behind escape hatches |
+| Entry forms, one screen per rule set | a dozen or more | **−23%** first, **−32%** second |
+| Read-heavy reports over an external API | under ten | +10% |
+| Vendor integrations that post to a ledger | under ten | +19% |
+| One-off complex screens | under ten | +6%, and 89% of it behind escape hatches |
 
-Only the family with fourteen members over one catalog shrank. Below roughly three apps
-sharing a shape the arithmetic inverts, because a single app pays on its own for its
-spec, its `data.ts`/`actions.ts` split, its committed `generated/` output, and every
-catalog component it has to write and cannot share.
+Only the largest group — a dozen-plus apps over one shared catalog — shrank. Below
+roughly three apps sharing a shape the arithmetic inverts, because a single app pays on
+its own for its spec, its `data.ts`/`actions.ts` split, its committed `generated/`
+output, and every catalog component it has to write and cannot share.
 
 - **Worth it** for three or more internal tools, admin panels, reporting screens or
   entry forms that are the same shape with different rules.
@@ -75,7 +75,7 @@ reads no catalogs, resolves no names and emits nothing.
 ```ts
 import { parseSpec } from "@desmondzee/nova/compile";
 
-const { spec, diagnostics } = parseSpec("apps/trips/app.yaml", source);
+const { spec, diagnostics } = parseSpec("apps/orders/app.yaml", source);
 ```
 
 `./schema`'s `validate(raw, positions)` is the same check without the YAML dependency —
@@ -89,13 +89,13 @@ dependency-free fallback that pins every diagnostic to the top of the named file
 ```ts
 import { compileApp } from "@desmondzee/nova/compile";
 
-const result = await compileApp("apps/trips", {
+const result = await compileApp("apps/orders", {
   components: ["@acme/ui"],
   states: { loading: "Loading", error: "ErrorNotice" },
   shell: "PageShell",
   outDir: "generated",
   tsconfigPath: "tsconfig.json",
-  basePath: "/api/apps/trips",
+  basePath: "/api/apps/orders",
 });
 
 for (const d of result.diagnostics) {
@@ -136,7 +136,7 @@ run rather than a `TypeError` out of whichever stage first touched it.
 
 **`outDir`** is resolved against the app folder. `"generated"` is the ordinary answer;
 so are `"src/gen/nova"`, a path that escapes the app folder
-(`"../../web/generated/trips"`), and an absolute one. The import specifiers back to
+(`"../../web/generated/orders"`), and an absolute one. The import specifiers back to
 `data.ts`, `actions.ts` and `compute.ts` are computed from the two resolved directories,
 so all four cases emit imports that resolve. Whatever you choose, the emitted files have
 to be inside something your own `tsc` compiles.
@@ -148,7 +148,7 @@ place spacing and structure between top-level sections belongs**. Nova hands it 
 page's `title:` and the sections as `children`:
 
 ```tsx
-<PageShell title={"Trips"}>
+<PageShell title={"Orders"}>
   <FilterBar … />
   <Table … />
 </PageShell>
@@ -165,18 +165,18 @@ or `"NodeNext"`, or one running the emitted handlers as plain Node ESM, must pas
 `".js"`; nothing else is accepted.
 
 **`basePath`** defaults to `""`. It is the path your host mounts this app's handler map
-at, and it prefixes the URLs the generated client fetches: `"/api/apps/trips"` turns
-`fetch("/_data/trips")` into `fetch("/api/apps/trips/_data/trips")`. The **keys of
+at, and it prefixes the URLs the generated client fetches: `"/api/apps/orders"` turns
+`fetch("/_data/orders")` into `fetch("/api/apps/orders/_data/orders")`. The **keys of
 `handlers`** deliberately do not move with it — they are matched against the remainder
 of the path *after* your mount, so prefixing both halves would double the prefix.
 
 **`columnProps`** defaults to `["columns", "numeric"]`. It names the props whose literal
 string-array value nova checks against the row type the section's loader returns — see
-[sorting](#actions-and-sorting). The default is the naming one
-reference host happens to use, not a rule: a catalog spelling its column list `cols`
-puts that here and gets the same check, and a catalog whose `columns` prop carries
-display *labels* rather than row keys sets `columnProps: []` and gets none. `sortable:`
-is nova's own word and is checked whatever this says.
+[sorting](#actions-and-sorting). The default is a common naming convention, not a rule: a
+catalog spelling its column list `cols` puts that here and gets the same check, and a
+catalog whose `columns` prop carries display *labels* rather than row keys sets
+`columnProps: []` and gets none. `sortable:` is nova's own word and is checked whatever
+this says.
 
 ### Nova will not write over a file it did not write
 
@@ -204,17 +204,18 @@ for (const app of apps) {
 }
 ```
 
-Results are identical either way; a session only removes repeated work. On a 38-app repo
-with a repository-wide tsconfig `include`, sharing one took the build from 65s to 3.3s
-and peak memory from 2.3GB to 0.7GB. Every cached entry is revalidated against the file's
-modification time and size, so a session is safe to hold across rebuilds in a watch loop.
-The one thing it will not notice is a *new* file appearing under the tsconfig's `include`
-while the tsconfig itself is unchanged — call `createSession()` again if that can happen.
+Results are identical either way; a session only removes repeated work. On a repo of a few
+dozen apps with a repository-wide tsconfig `include`, sharing one took the build from 65s
+to 3.3s and peak memory from 2.3GB to 0.7GB. Every cached entry is revalidated against the
+file's modification time and size, so a session is safe to hold across rebuilds in a watch
+loop. The one thing it will not notice is a *new* file appearing under the tsconfig's
+`include` while the tsconfig itself is unchanged — call `createSession()` again if that
+can happen.
 
 ## What an app looks like
 
 ```
-apps/trips/
+apps/orders/
 ├── app.yaml       the spec
 ├── data.ts        typed async loaders
 ├── actions.ts     typed mutations
@@ -241,19 +242,19 @@ A minimal spec, and the loader behind it:
 # app.yaml
 pages:
   "/":
-    title: Trips
+    title: Orders
     filters:
       month: { default: "2026-08" }
     sections:
       - Table:
-          rows: data#trips
-          columns: [date, km]
-          empty: No trips yet
+          rows: data#orders
+          columns: [date, total]
+          empty: No orders yet
 ```
 
 ```ts
 // data.ts
-export async function trips(input: { month: string }): Promise<Array<{ date: string; km: number }>> {
+export async function orders(input: { month: string }): Promise<Array<{ date: string; total: number }>> {
   // …
 }
 ```
@@ -276,7 +277,7 @@ export const pages: Record<string, React.ComponentType<{ params: Record<string, 
 ```
 
 Keyed by the route exactly as the spec wrote it, `:name` marking a parameter
-(`"/trip/:id"`). **Nova ships no matcher** — matching a request path against those
+(`"/order/:id"`). **Nova ships no matcher** — matching a request path against those
 patterns, extracting the parameters and passing them as `params` is the host's job, and
 it is a short loop over `route.split("/")`. A component is an ordinary function
 component; render it however your host renders one.
@@ -362,25 +363,25 @@ input type, and that is checked by TypeScript rather than by nova:
 
 ```yaml
 - Form:
-    submit: actions#saveTrip
-    confirm: Save this trip?
+    submit: actions#saveOrder
+    confirm: Save this order?
     fields:
-      - DateField:   { name: date,    label: Date }
-      - NumberField: { name: km,      label: "Distance (km)", initial: 0 }
-      - TextField:   { name: purpose, label: Purpose }
+      - DateField:   { name: date,      label: Date }
+      - NumberField: { name: total,     label: Total, initial: 0 }
+      - TextField:   { name: reference, label: Reference }
 ```
 
 ```ts
 // actions.ts
-export interface TripInput { date: string; km: number; purpose: string }
+export interface OrderInput { date: string; total: number; reference: string }
 
-export async function saveTrip(input: TripInput):
+export async function saveOrder(input: OrderInput):
   Promise<{ ok: true } | { ok: false; fieldErrors: Record<string, string> }> { … }
 ```
 
-The page holds the form in `useForm<SaveTripInput>`, where `SaveTripInput` is
-`Parameters<typeof actions.saveTrip>[0]`. Each field emits `values["km"]`,
-`set("km", value)` and `errors["km"]` against it, so three things are compile errors at
+The page holds the form in `useForm<SaveOrderInput>`, where `SaveOrderInput` is
+`Parameters<typeof actions.saveOrder>[0]`. Each field emits `values["total"]`,
+`set("total", value)` and `errors["total"]` against it, so three things are compile errors at
 the spec line rather than runtime surprises:
 
 - **a field naming a key the action does not accept**, reported on that field's own line;
@@ -402,10 +403,10 @@ matching field automatically.
 
 ### Binding a union-typed key
 
-An action whose input narrows a key — `vehicle: "car" | "van"` — needs a field component
+An action whose input narrows a key — `channel: "web" | "phone"` — needs a field component
 that can carry that type. `onChange`'s parameter type comes from the component, so a
 picker declaring `onChange(value: string): void` cannot be bound to it: `string` is not
-assignable to the union, and rightly so, since such a picker may emit `"lorry"`. **Write
+assignable to the union, and rightly so, since such a picker may emit `"post"`. **Write
 the field component generic in the value it carries**:
 
 ```tsx
@@ -418,11 +419,11 @@ export function ChoiceField<T extends string>(props: {
 }): React.ReactElement { … }
 ```
 
-Nova emits an unannotated lambda — `(value) => form.set("vehicle", value)` — and
+Nova emits an unannotated lambda — `(value) => form.set("channel", value)` — and
 **writes the type argument itself**:
 
 ```tsx
-<ChoiceField<SaveTripInput["vehicle"]> value={…} onChange={(value) => …} … />
+<ChoiceField<SaveOrderInput["channel"]> value={…} onChange={(value) => …} … />
 ```
 
 Leaving the type parameter to inference is not enough on its own: a parameter that none of
@@ -443,8 +444,8 @@ Nothing is cast, so nothing is silenced. What it catches:
 
 | Spec | Diagnostic |
 | --- | --- |
-| an option outside the union (`{ value: lorry }`) | `NOVA3001` at the field's line: `'"lorry"' is not assignable to '"car" \| "van"'` |
-| a plain `string` picker on the union key | `NOVA3001` at the field's line: `'string' is not assignable to '"car" \| "van"'` |
+| an option outside the union (`{ value: post }`) | `NOVA3001` at the field's line: `'"post"' is not assignable to '"web" \| "phone"'` |
+| a plain `string` picker on the union key | `NOVA3001` at the field's line: `'string' is not assignable to '"web" \| "phone"'` |
 | a generic field whose parameter is not the value type | `NOVA3001` at the field's line — the type argument does not satisfy its constraint |
 | a generic field needing two type arguments | `NOVA2012` at the field's line |
 | a `NumberField` on a `string` key | the component's own `onChange` decides |
@@ -452,7 +453,7 @@ Nothing is cast, so nothing is silenced. What it catches:
 
 A **section** component may be generic too, and there nova has no type argument to give —
 its parameter is resolved by ordinary inference from the props the spec binds. That works
-where the parameter is reachable from a bound prop (`rows: data#trips` fixing a table's
+where the parameter is reachable from a bound prop (`rows: data#orders` fixing a table's
 row type); it does *not* work where the parameter appears only in a mapped or conditional
 prop type. See [limitations](#limitations).
 
@@ -462,7 +463,7 @@ prop type. See [limitations](#limitations).
 or through an ordinary prop binding:
 
 ```yaml
-- DeleteButton: { label: Delete, onSubmit: actions#deleteTrip, confirm: Delete this trip? }
+- DeleteButton: { label: Delete, onSubmit: actions#deleteOrder, confirm: Delete this order? }
 ```
 
 It is consumed by nova rather than forwarded, so a delete button needs no `confirm` prop of
@@ -471,21 +472,21 @@ on the same action is `NOVA1010`; a `confirm:` with no action to guard, or with 
 one, is `NOVA1007`.
 
 **An `actions#` binding on an ordinary prop is checked against the action's own input type,
-and resolves the action's own result.** It reaches the component as `deleteTripAction.run`,
+and resolves the action's own result.** It reaches the component as `deleteOrderAction.run`,
 and the page hoists that as
-`useAction<DeleteTripInput, Awaited<ReturnType<DeleteTrip>>>(…)`, so `run` takes the
+`useAction<DeleteOrderInput, Awaited<ReturnType<DeleteOrder>>>(…)`, so `run` takes the
 action's declared input and resolves its declared result, or `null`:
 
 ```yaml
-- ActivityList: { rows: data#trips, onDelete: actions#deleteTrip }
+- ActivityList: { rows: data#orders, onDelete: actions#deleteOrder }
 ```
 
 ```tsx
-// `onDelete`'s parameter decides whether the action may be bound at all: `Trip` must be
-// assignable to DeleteTripInput. Its return type is what the component may read.
+// `onDelete`'s parameter decides whether the action may be bound at all: `Order` must be
+// assignable to DeleteOrderInput. Its return type is what the component may read.
 export function ActivityList(props: {
-  rows: readonly Trip[];
-  onDelete: (row: Trip) => Promise<{ ok: boolean; warning?: string } | null>;
+  rows: readonly Order[];
+  onDelete: (row: Order) => Promise<{ ok: boolean; warning?: string } | null>;
 }): React.ReactElement { … }
 ```
 
@@ -499,8 +500,8 @@ else is the action's own return value, parsed from the response body, so an acti
 declaring three outcomes hands the component three outcomes:
 
 ```ts
-// actions.ts — the upstream accepted the claim but had something to say about it.
-export async function submitMonth(input: { month: string }): Promise<
+// actions.ts — the upstream accepted the order but had something to say about it.
+export async function submitOrder(input: { id: string }): Promise<
   { ok: true; warning?: string } | { ok: false; fieldErrors: Record<string, string> }
 > { … }
 ```
@@ -514,7 +515,7 @@ state and its round trip through the URL — `?sort=` and `?dir=`, beside the fi
 hands the component `sort` and `onSort`; ordering the rows is the component's own job.
 
 ```yaml
-- Table: { rows: data#trips, columns: [date, km], sortable: [date, km] }
+- Table: { rows: data#orders, columns: [date, total], sortable: [date, total] }
 ```
 
 A page holds one sort state, so a second sortable section is `NOVA1011`. A sortable column
@@ -530,8 +531,8 @@ two names a column list is written under by default (see `columnProps`), and a n
 of them that is not a key of the row type is the same `NOVA3001` at that list's line.
 
 The row type is taken from the one value the section reads from a loader, **including the
-path into it**: `rows: data#travel.days` is checked against the element type of
-`Travel["days"]`, not of `Travel`. A section reading two different loader values is not
+path into it**: `rows: data#order.lines` is checked against the element type of
+`Order["lines"]`, not of `Order`. A section reading two different loader values is not
 checked — there is no single row type the columns belong to, and nova will not pick — and
 neither is one whose data is not a list of objects.
 
@@ -544,12 +545,12 @@ value does:
 
 ```ts
 // data.ts — the signature is the opt-in.
-export async function deals(input: {
+export async function shipments(input: {
   region: string;                  // a route param or a filter, as ever
   page: string;
   sort: string;                    // the column, "" when nothing is sorted
   dir: "asc" | "desc";             // "asc" when nothing is sorted
-}): Promise<Deal[]> { … }
+}): Promise<Shipment[]> { … }
 ```
 
 A loader whose input names `sort` and/or `dir` is given the page's sort state and is
@@ -572,11 +573,11 @@ sortable section on the page the names are yours.
 without a reload:
 
 ```yaml
-- Form: { submit: actions#saveTrip, refreshes: [trips], fields: [ … ] }
+- Form: { submit: actions#saveOrder, refreshes: [orders], fields: [ … ] }
 ```
 
 Each name is resolved against the loaders that page's own sections bind, so
-`refreshes: [tirps]` is `NOVA1012` at that line rather than a page that silently never
+`refreshes: [odrers]` is `NOVA1012` at that line rather than a page that silently never
 refreshes. It attaches to the one action the section runs — `NOVA1007` if there is not
 exactly one, exactly as `confirm:` — and runs only when the action reports `ok: true`. There
 is no cache and no key space behind it: it calls `reload()` on each named loader.
@@ -611,7 +612,7 @@ is a `NOVA3001` on every use, which is a poor way to discover it.
 
 | Where | What nova writes | What your component must declare |
 | --- | --- | --- |
-| `shell` | `<PageShell title={"Trips"}>` … `</PageShell>` around the page | `title?: string` (omitted for a page with no `title:`) and `children` |
+| `shell` | `<PageShell title={"Orders"}>` … `</PageShell>` around the page | `title?: string` (omitted for a page with no `title:`) and `children` |
 | `states.loading` | `<Loading />`, once per waiting section | every prop optional — it is given none at all |
 | `states.error` | `<ErrorNotice>{message}</ErrorNotice>`, in place of the failed section | `children` — the message is not a prop |
 | a form shell (`submit:`) | `busy`, `error`, `onSubmit`, its fields as children | `busy: boolean`, `error: string \| null`, `onSubmit: () => Promise<boolean>`, `children` |
@@ -658,12 +659,12 @@ where it has not arrived, the section itself otherwise — and a section that bi
 is not gated at all:
 
 ```tsx
-<PageShell title={"Trips"}>
-  <TabNav … />                                             {/* chrome: always rendered */}
+<PageShell title={"Orders"}>
+  <Toolbar … />                                           {/* chrome: always rendered */}
   {stats.error !== null ? <ErrorNotice>{stats.error}</ErrorNotice>
-    : stats.value === null ? <Loading /> : <StatGrid stats={stats.value} />}
-  {trips.error !== null ? <ErrorNotice>{trips.error}</ErrorNotice>
-    : trips.value === null ? <Loading /> : <Table rows={trips.value} … />}
+    : stats.value === null ? <Loading /> : <StatCards stats={stats.value} />}
+  {orders.error !== null ? <ErrorNotice>{orders.error}</ErrorNotice>
+    : orders.value === null ? <Loading /> : <Table rows={orders.value} … />}
 </PageShell>
 ```
 
@@ -685,10 +686,10 @@ with the condition under which it is visible, and a later section binding the sa
 loader states the failure itself when that condition does not hold:
 
 ```tsx
-{trips.error !== null
+{orders.error !== null
   ? (heading.error === null && heading.value !== null ? null   {/* said inside the Panel */}
-     : <ErrorNotice>{trips.error}</ErrorNotice>)               {/* the Panel is not there */}
-  : trips.value === null ? <Loading /> : <Breakdown rows={trips.value} … />}
+     : <ErrorNotice>{orders.error}</ErrorNotice>)              {/* the Panel is not there */}
+  : orders.value === null ? <Loading /> : <SummaryTable rows={orders.value} … />}
 ```
 
 Exactly one notice per failed loader in every combination — the deduplication is conditional
@@ -699,10 +700,10 @@ carrying your date pickers also binds the report those pickers scope, a bad date
 the card with it and the reader has no way left to correct the range. Where the controls do
 not actually need that data, the fix is one line of YAML: put them in their own section,
 which binds no loader and is therefore never gated. Where the controls genuinely need the
-data — a picker whose entity list 403s — splitting does not help; see
+data — a picker whose customer list 403s — splitting does not help; see
 [limitations](#limitations).
 
-`.value` is narrowed: the conditional is written one loader at a time so that `trips.value`
+`.value` is narrowed: the conditional is written one loader at a time so that `orders.value`
 is non-null in the branch that reads it. Nothing is asserted or cast, so a prop bound to the
 wrong type is still a `NOVA3001` at the spec line that bound it.
 
@@ -712,7 +713,7 @@ the status a thrown value asks for:
 ```ts
 // data.ts — a stale link is a stale link, not a server fault
 if (rows.length === 0) {
-  throw Object.assign(new Error("This trip no longer exists."), { status: 404 });
+  throw Object.assign(new Error("This order no longer exists."), { status: 404 });
 }
 ```
 
@@ -727,7 +728,7 @@ loading state — so this throw is how "not found" is said.
 **A malformed request body is a 400.** `await req.json()` rejects on a body that is not
 JSON; that is the caller's mistake, and the generated action handler answers
 `400 {"ok":false,"error":"invalid JSON body"}` rather than letting it surface as a server
-error. So is a body that parses but is not an object — `null`, `12`, `"trip"`, `true` — since
+error. So is a body that parses but is not an object — `null`, `12`, `"order"`, `true` — since
 an action's declared input is an object type, which is exactly what the `as never` at the
 handler boundary asserts.
 
@@ -765,7 +766,7 @@ section above says to declare a sort direction.
 The **action** half of the same boundary is not checked, and cannot be from a type alone: an
 action receives an arbitrary JSON body, asserted into its declared input after nothing but an
 "is it an object" test. `POST /_actions/<name>` performs **no input validation** — an action
-declaring `{ documentId: string; amountMinor: number }` will be called with `{}` if a caller
+declaring `{ orderId: string; quantity: number }` will be called with `{}` if a caller
 sends `{}`. Validate inside the action, and do not expose generated action endpoints to any
 caller the host does not already trust.
 
@@ -852,7 +853,7 @@ expressible. `useForm` seeds its state on first render and does not re-seed.
 not accept it. Either the field accepts `undefined` or the action declares the key required.
 
 **Loading is inferred from `value === null`, not from `state.loading`.** A loader that
-legitimately resolves to `null` — `Promise<Trip | null>`, an ordinary signature — pins its
+legitimately resolves to `null` — `Promise<Order | null>`, an ordinary signature — pins its
 section on the loading state forever. Throw a `status`-carrying error instead (see
 [failing well](#failing-well)). The `loading` flag `useLoader` maintains is read by no
 generated page.
@@ -879,14 +880,15 @@ action, so one page cannot hold two forms on the same action (`NOVA1010`). Both 
 where nova reports rather than guesses.
 
 **The runtime is vendored per app, so a runtime fix is an N-app diff.**
-`generated/runtime.tsx` is a per-app copy of the hooks the app uses, committed. That is what
-keeps generated code importing nothing from nova, and it means a defect in any of those hooks
-is fixed by regenerating and reviewing one file per app rather than by bumping a version — on
-a 38-app host, 38 regenerated files. Budget a regenerate-and-review pass across every app for
-any nova upgrade whose notes mention `runtime.tsx`, and treat the emitted stamp (which covers
-the compiler version) as the thing that tells you which apps are behind. A `runtimeDir` config
-emitting one shared runtime per repository would satisfy the same rule and is not in 0.2.0: it
-changes the emitted module graph and the mounting contract.
+`generated/runtime.tsx` is a per-app copy of the hooks the app uses, committed. That is
+what keeps generated code importing nothing from nova, and it means a defect in any of
+those hooks is fixed by regenerating and reviewing one file per app rather than by bumping
+a version — on a host with a few dozen apps, that is a few dozen regenerated files. Budget
+a regenerate-and-review pass across every app for any nova upgrade whose notes mention
+`runtime.tsx`, and treat the emitted stamp (which covers the compiler version) as the
+thing that tells you which apps are behind. A `runtimeDir` config emitting one shared
+runtime per repository would satisfy the same rule and is not in 0.2.0: it changes the
+emitted module graph and the mounting contract.
 
 **The typecheck covers only the spec-to-code seam.** `typecheckEmitted` reports diagnostics on
 the files nova emits, not on your hand-written modules or catalog components — those already go
@@ -907,7 +909,7 @@ run (the default) verifies that.
 
 **A generic *section* component's type parameter is left to inference.** Nova writes a type
 argument for a field, because it knows the one type a field is about; a section has no such
-type. Where the parameter is reachable from a bound prop — `rows: data#trips` fixing a table's
+type. Where the parameter is reachable from a bound prop — `rows: data#orders` fixing a table's
 row type — that works and the derived props are checked. Where it appears only inside a mapped
 or conditional prop type (`toggles: Array<{ key: BooleanKeys<T> }>`), nothing infers it, it
 resolves to its constraint, and the constraint accepts anything with no diagnostic to say so.
@@ -923,10 +925,10 @@ JavaScript.
 inline.** A handler answers either a value at 200 or `{ ok: false, error }` at the thrown
 status, and `useLoader` discards the body of any non-2xx response and nulls its `value` — so
 `error` and `value` are never both meaningful and the section is replaced wholesale. A section
-holding controls the reader needs *in order to recover* — an entity picker whose list 403s,
+holding controls the reader needs *in order to recover* — a customer picker whose list 403s,
 beside the date pickers and the Run button — must therefore choose between the right status on
 the wire and a usable page. The workaround is to return the failure inside the payload
-(`{ entities: [], error }` at 200). Doing it properly is a spec-surface change and is
+(`{ customers: [], error }` at 200). Doing it properly is a spec-surface change and is
 deliberately not in 0.2.0.
 
 **An action refuses with a status, but not with per-field detail.** An action that throws
@@ -972,7 +974,8 @@ those satisfy `engines`.
 
 ## Versions
 
-**0.2.0 is the first published version.** 0.1.0 was never on the registry — it existed as
-vendored tarballs while nova was built against real apps — so there is nothing to migrate from.
+**0.2.0 is the first published version.** 0.1.0 was never on the registry — it existed only as
+unpublished tarballs while nova was developed against real applications — so there is
+nothing to migrate from.
 [`CHANGELOG.md`](CHANGELOG.md) records what changed before the first release, which is of
-interest only if you are reading generated output from one of those vendored builds.
+interest only if you are reading generated output from one of those unpublished builds.

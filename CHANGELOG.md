@@ -9,12 +9,12 @@ two mounted maps.
 
 ## Before the first release
 
-0.1.0 was never published. It existed as vendored tarballs consumed by one host while
-nova was built against real apps: five conversions of production apps, plus two foreign
-consumers building against the README alone. What follows is the record of what those
-found. **It is not a migration guide** — nothing installed from npm can be behind any of
-it. It is here for one reason: if you are reading generated output emitted by a vendored
-0.1.0, this is what nova used to do differently.
+0.1.0 was never published. It existed only as unpublished tarballs while nova was
+developed against real applications: five conversions of existing apps, plus two
+independent consumers built against the README alone. What follows is the record of what
+those found. **It is not a migration guide** — nothing installed from npm can be behind
+any of it. It is here for one reason: if you are reading generated output emitted by an
+unpublished 0.1.0, this is what nova used to do differently.
 
 ### Type checks that did not exist
 
@@ -36,7 +36,7 @@ it. It is here for one reason: if you are reading generated output emitted by a 
   props type must be non-generic, which was what made a union-typed action input
   unbindable at all.
 - **A literal `columns:` or `numeric:` list is checked against the row type.**
-  `columns: [dayz]` compiled clean and rendered a column of en dashes on three production
+  `columns: [totl]` compiled clean and rendered a column of en dashes on three
   pages. `columnProps` is the opt-out for a catalog whose `columns` prop carries labels
   rather than row keys.
 - **A sortable column is checked against the row type**, not only against a literal
