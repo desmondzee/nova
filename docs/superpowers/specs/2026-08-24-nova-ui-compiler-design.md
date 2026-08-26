@@ -61,7 +61,7 @@ Components live in the host codebase. Every type check is performed by the host'
 own TypeScript rather than reimplemented.
 
 It does emit a **runtime**, and this design vendors a copy of it into every app
-(`generated/runtime.tsx`, ~50–120 lines of fetching, race-guarding, query-string
+(`generated/runtime.tsx`, ~50–230 lines of fetching, race-guarding, query-string
 round-tripping, confirmation and form state). "No runtime" was written meaning
 "nothing of nova's is in the host's dependency graph or bundle", which is true and
 is what Rule 2 below enforces; it does not mean the emitted app has no runtime
@@ -564,7 +564,7 @@ pinning message wording.
 
 ### 7.7 The runtime is emitted per app, and that is a cost
 
-`generated/runtime.tsx` is ~50–120 lines of `useLoader`, `useAction`, `useForm`,
+`generated/runtime.tsx` is ~50–230 lines of `useLoader`, `useAction`, `useForm`,
 `useFilters` and `useSort`, and every app gets its own committed copy. This is a
 deliberate consequence of Rule 2 (emitted code imports nothing from nova) taken at
 its simplest, and it is what makes the emitted app independent of nova's own
