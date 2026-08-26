@@ -59,6 +59,24 @@ describe("readCatalogs", () => {
     expect(diagnostics[0]!.code).toBe("NOVA2010");
     expect(diagnostics[0]!.message).toContain("../catalog/ui");
     expect(diagnostics[0]!.message).toContain("../catalog/extra");
+    // The diagnostic sits at app.yaml:1:1 — the spec is not what is wrong — so the two
+    // declarations are the only thing in it that says which file to open. In
+    // `components:` order, and at the component's own declaration rather than line 1.
+    expect(diagnostics[0]!.related).toEqual([
+      {
+        file: here("./fixtures/catalog/ui.tsx"),
+        line: expect.any(Number),
+        col: expect.any(Number),
+        message: "'../catalog/ui' declares it here",
+      },
+      {
+        file: here("./fixtures/catalog/extra.tsx"),
+        line: expect.any(Number),
+        col: expect.any(Number),
+        message: "'../catalog/extra' declares it here",
+      },
+    ]);
+    expect(diagnostics[0]!.related![0]!.line).toBeGreaterThan(0);
     expect(catalog.get("Table")!.module).toBe("../catalog/ui");
     expect(catalog.names()).toContain("Banner");
   });

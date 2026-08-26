@@ -1,4 +1,4 @@
-import { diagnostic, type Diagnostic } from "../schema/diagnostic.js";
+import { diagnostic, type Diagnostic, type Position } from "../schema/diagnostic.js";
 import type { NovaConfig } from "./config.js";
 import { createProgram, moduleExports, resolveModule, type ProgramSession } from "./program.js";
 
@@ -7,6 +7,15 @@ export type CatalogEntry = {
    * is not repeated here: it is the key every entry is looked up by. */
   module: string;
   file: string;
+  /**
+   * Where the component itself is declared — which is `file` for a catalog that exports
+   * its components directly, and the component's own module for a catalog that is an
+   * index of re-exports. Read to give the loser of a NOVA2010 collision a "declared
+   * here" position: the diagnostic is reported against `app.yaml:1:1`, because the spec
+   * is not what is wrong, so without this there is nothing in it pointing at either
+   * declaration.
+   */
+  at: Position;
   /** The export's type parameters, carried through so the emitter can decide whether it
    * has a type argument to write. See ExportInfo.typeParams. */
   typeParams: { total: number; required: number };
@@ -56,6 +65,11 @@ export function readCatalogs(
     for (const { module, file } of resolved) {
       for (const exported of moduleExports(handle.program, file)) {
         if (!exported.callable || !isComponentName(exported.name)) continue;
+        const declaredAt: Position = {
+          file: exported.file,
+          line: exported.line,
+          col: exported.col,
+        };
         const existing = entries.get(exported.name);
         if (existing) {
           diagnostics.push(
@@ -63,12 +77,20 @@ export function readCatalogs(
               "NOVA2010",
               `component '${exported.name}' is exported by both '${existing.module}' and '${module}'`,
               at,
-              { hint: "rename one, or remove a catalog from nova.config" },
+              {
+                hint: "rename one, or remove a catalog from nova.config",
+                // Both ends, in `components:` order: the catalogs are named in the
+                // message, but which file to open is not derivable from a specifier.
+                related: [
+                  { ...existing.at, message: `'${existing.module}' declares it here` },
+                  { ...declaredAt, message: `'${module}' declares it here` },
+                ],
+              },
             ),
           );
           continue;
         }
-        entries.set(exported.name, { module, file, typeParams: exported.typeParams });
+        entries.set(exported.name, { module, file, at: declaredAt, typeParams: exported.typeParams });
       }
     }
   } else {
