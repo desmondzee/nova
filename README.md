@@ -784,7 +784,8 @@ wants a number parses it (`Math.max(1, Number(input.page) || 1)`), and a filter'
 is written as one (`page: { default: "1" }`). Nova does not coerce.
 
 It does check that you did not say otherwise. The generated handler calls
-`data.x(Object.fromEntries(searchParams) as never)`, so every value a loader can receive is a
+`data.x(query(req) as never)`, where `query` builds the object with `URLSearchParams.forEach`
+(`entries()` would require `lib.dom.iterable` of the host). Every value a loader can receive is a
 `string` — and a loader declaring `limit: number` would be handed `"25"`, with
 `input.limit > 10` comparing a string to a number and nothing anywhere saying so. An input key
 whose declared type a string can never be is `NOVA2017`, reported at the loader's own
@@ -813,7 +814,7 @@ Codes are stable; message wording is not. Assert on `code`.
   | Code | Meaning |
   | --- | --- |
   | `NOVA1000` | the YAML does not parse |
-  | `NOVA1001` | an unknown key, or a prop nova itself supplies (a form's `busy`/`error`/`onSubmit`, a field's `value`/`onChange`/`error`, a sortable section's `sort`/`onSort`) |
+  | `NOVA1001` | an unknown key, a prop nova itself supplies (a form's `busy`/`error`/`onSubmit`, a field's `value`/`onChange`/`error`, a sortable section's `sort`/`onSort`), or a filter named `set`, which would collide with the setter |
   | `NOVA1002` | a missing required key |
   | `NOVA1003` | a key of the wrong shape |
   | `NOVA1004` | not a component reference |
@@ -842,7 +843,7 @@ Codes are stable; message wording is not. Assert on `code`.
   | `NOVA2006` | a `filters.` reference the page does not declare |
   | `NOVA2007` | a local component module (`./views/charts#Chart`) that cannot be resolved |
   | `NOVA2008` | a local module with no component export of that name |
-  | `NOVA2009` | the spec binds one name two ways — a component name bound to two modules, or a loader and an action sharing a name |
+  | `NOVA2009` | the spec binds one name two ways — a component name bound to two modules, or one name shared across two of `data`/`actions`/`compute` |
   | `NOVA2010` | two *catalogs* both export a component of that name — a fact about `components:` rather than about the spec, so it is reported at the top of `app.yaml` with both declarations in `related` |
   | `NOVA2011` | a `tsconfigPath` that does not parse |
   | `NOVA2012` | a field component needing more than one type argument; nova has exactly one to give (the type of the input key it edits), and a parameter left to inference is a parameter whose constraints may silently stop applying |
